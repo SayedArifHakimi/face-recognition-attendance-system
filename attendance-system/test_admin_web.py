@@ -5,7 +5,7 @@ import threading
 import time
 import urllib.request
 import unittest
-from http.server import HTTPServer
+from http.server import HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -36,7 +36,7 @@ class TestAdminWeb(unittest.TestCase):
         cls.patcher_gal.start()
 
         # Start background HTTP server on port 0 (OS picks free port)
-        cls.server = HTTPServer(("127.0.0.1", 0), AttendanceHTTPHandler)
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), AttendanceHTTPHandler)
         cls.port = cls.server.server_port
         cls.base_url = f"http://127.0.0.1:{cls.port}"
         cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)

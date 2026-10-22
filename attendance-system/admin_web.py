@@ -9,7 +9,7 @@ import time
 import urllib.parse
 from datetime import datetime, timezone
 from http import HTTPStatus
-from http.server import HTTPServer, BaseHTTPRequestHandler
+from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Dict, Any, Optional
 
@@ -238,10 +238,10 @@ USER_PAGE_HTML = """<!doctype html>
           </div>
 
           <div style="display: flex; flex-direction: column; gap: 10px;">
-            <button class="btn btn-success" id="btnWebClockIn" onclick="webClock('CHECK_IN')" disabled>
+            <button class="btn btn-success" id="btnWebClockIn" onclick="webClock('CHECK_IN')">
               ✓ Clock In (Press I)
             </button>
-            <button class="btn btn-out" id="btnWebClockOut" onclick="webClock('CHECK_OUT')" disabled>
+            <button class="btn btn-out" id="btnWebClockOut" onclick="webClock('CHECK_OUT')">
               → Clock Out (Press O)
             </button>
           </div>
@@ -309,8 +309,8 @@ USER_PAGE_HTML = """<!doctype html>
         clearInterval(pollInterval);
         document.getElementById('detectedName').innerText = 'Camera stopped';
         document.getElementById('detectedScore').innerText = 'Score: -';
-        document.getElementById('btnWebClockIn').disabled = true;
-        document.getElementById('btnWebClockOut').disabled = true;
+        document.getElementById('btnWebClockIn').innerText = '✓ Clock In (Press I)';
+        document.getElementById('btnWebClockOut').innerText = '→ Clock Out (Press O)';
       }
     }
 
@@ -348,14 +348,20 @@ USER_PAGE_HTML = """<!doctype html>
     }
 
     async function webClock(eventType) {
-      if (!activeDetectedPerson) return;
+      const banner = document.getElementById('kioskAlert');
+      if (!activeDetectedPerson) {
+        banner.style.display = 'block';
+        banner.className = 'alert-banner alert-warning';
+        banner.innerText = '⚠️ No verified face detected. Please face the camera and start the camera stream to clock in.';
+        setTimeout(() => { banner.style.display = 'none'; }, 4000);
+        return;
+      }
       const res = await fetch('/api/clock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ person_name: activeDetectedPerson, event_type: eventType, similarity: activeDetectedScore })
       });
       const data = await res.json();
-      const banner = document.getElementById('kioskAlert');
       banner.style.display = 'block';
       if (res.ok && data.success) {
         banner.className = 'alert-banner alert-success';
@@ -405,9 +411,14 @@ USER_PAGE_HTML = """<!doctype html>
       if (e.key === 'o' || e.key === 'O') webClock('CHECK_OUT');
     });
 
-    window.addEventListener('DOMContentLoaded', () => {
+    function initKiosk() {
       fetchTodayActivity();
-    });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initKiosk);
+    } else {
+      initKiosk();
+    }
   </script>
 </body>
 </html>
@@ -677,12 +688,12 @@ ADMIN_PAGE_HTML = """<!doctype html>
 
     <!-- Navigation Tabs -->
     <div class="tabs">
-      <button class="tab active" onclick="switchTab('events')">Attendance Records</button>
-      <button class="tab" onclick="switchTab('reconciliation')">Daily Reconciliation</button>
-      <button class="tab" onclick="switchTab('gallery')">Enrolled Users</button>
-      <button class="tab" onclick="switchTab('backups')">Backups &amp; Data Retention</button>
-      <button class="tab" onclick="switchTab('diagnostics')">Diagnostics &amp; Health</button>
-      <button class="tab" onclick="switchTab('audit')">Tamper Audit Trail</button>
+      <button class="tab active" data-tab="events" onclick="switchTab('events')">Attendance Records</button>
+      <button class="tab" data-tab="reconciliation" onclick="switchTab('reconciliation')">Daily Reconciliation</button>
+      <button class="tab" data-tab="gallery" onclick="switchTab('gallery')">Enrolled Users</button>
+      <button class="tab" data-tab="backups" onclick="switchTab('backups')">Backups &amp; Data Retention</button>
+      <button class="tab" data-tab="diagnostics" onclick="switchTab('diagnostics')">Diagnostics &amp; Health</button>
+      <button class="tab" data-tab="audit" onclick="switchTab('audit')">Tamper Audit Trail</button>
     </div>
 
     <!-- Tab: Attendance Events -->
@@ -1045,20 +1056,21 @@ ADMIN_PAGE_HTML = """<!doctype html>
     }
 
     function switchTab(tabId) {
-      document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tabs .tab').forEach(t => {
+        t.classList.toggle('active', t.getAttribute('data-tab') === tabId);
+      });
       const tabMap = {
         events: 'tabEvents',
         reconciliation: 'tabReconciliation',
         gallery: 'tabGallery',
+        backups: 'tabBackups',
         diagnostics: 'tabDiagnostics',
-        audit: 'tabAudit',
-        backups: 'tabBackups'
+        audit: 'tabAudit'
       };
       Object.keys(tabMap).forEach(k => {
         const el = document.getElementById(tabMap[k]);
         if (el) el.style.display = k === tabId ? 'block' : 'none';
       });
-      event.target.classList.add('active');
       if (tabId === 'reconciliation') fetchReconciliation();
       if (tabId === 'gallery') fetchGallery();
       if (tabId === 'audit') fetchAudit();
@@ -1231,7 +1243,12 @@ ADMIN_PAGE_HTML = """<!doctype html>
     }
 
     async function optimizeGallery() {
-      if (!confirm('Optimize Gallery: This will prune noisy outlier embeddings with low centroid similarity (< 0.45).\nAn automatic pre-prune backup of gallery.json will be saved.\n\nDo you want to proceed?')) {
+      const confirmMsg = [
+        'Optimize Gallery: This will prune noisy outlier embeddings with low centroid similarity (< 0.45).',
+        'An automatic pre-prune backup of gallery.json will be saved.',
+        'Do you want to proceed?'
+      ].join(String.fromCharCode(10));
+      if (!confirm(confirmMsg)) {
         return;
       }
       try {
@@ -1264,8 +1281,13 @@ ADMIN_PAGE_HTML = """<!doctype html>
         return;
       }
 
-      const desc = olderThan ? `older than ${olderThan}` : `with status '${statusOnly}'`;
-      if (!confirm(`CAUTION: You are about to permanently purge attendance records ${desc}.\nAn automatic backup snapshot will be created first.\n\nDo you want to proceed?`)) {
+      const desc = olderThan ? ('older than ' + olderThan) : ('with status ' + statusOnly);
+      const confirmMsg = [
+        'CAUTION: You are about to permanently purge attendance records ' + desc + '.',
+        'An automatic backup snapshot will be created first.',
+        'Do you want to proceed?'
+      ].join(String.fromCharCode(10));
+      if (!confirm(confirmMsg)) {
         return;
       }
 
@@ -1282,7 +1304,11 @@ ADMIN_PAGE_HTML = """<!doctype html>
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          alert(`Purge Completed: ${data.purged_count} records purged.\nAuto-Backup Snapshot: ${data.backup_path}`);
+          const alertMsg = [
+            'Purge Completed: ' + data.purged_count + ' records purged.',
+            'Auto-Backup Snapshot: ' + data.backup_path
+          ].join(String.fromCharCode(10));
+          alert(alertMsg);
           fetchSummary();
           fetchEvents();
           fetchBackups();
@@ -1514,12 +1540,18 @@ ADMIN_PAGE_HTML = """<!doctype html>
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
+    function initAdmin() {
       const today = new Date().toISOString().slice(0, 10);
-      document.getElementById('filterDate').value = today;
+      const filterDateEl = document.getElementById('filterDate');
+      if (filterDateEl) filterDateEl.value = today;
       fetchGallery();
       fetchEvents();
-    });
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initAdmin);
+    } else {
+      initAdmin();
+    }
   </script>
 </body>
 </html>
@@ -1917,7 +1949,7 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
 def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     init_db()
     server_address = (host, port)
-    httpd = HTTPServer(server_address, AttendanceHTTPHandler)
+    httpd = ThreadingHTTPServer(server_address, AttendanceHTTPHandler)
     print(f"Face Attendance System listening:")
     print(f"  - User Kiosk View: http://{host}:{port}/")
     print(f"  - Admin Portal   : http://{host}:{port}/admin")
