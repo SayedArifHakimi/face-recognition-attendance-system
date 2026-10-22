@@ -459,8 +459,10 @@ class FaceWindow:
                 x, y, w, h = (int(v) for v in face[:4])
                 identity = "Unknown"
                 aligned = self.recognizer.alignCrop(frame, face)
-                sharpness = cv2.Laplacian(cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
-                valid = min(w, h) >= self.args.min_face and sharpness >= self.args.min_sharpness
+                gray_face = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+                sharpness = cv2.Laplacian(gray_face, cv2.CV_64F).var()
+                luminance = float(gray_face.mean())
+                valid = min(w, h) >= self.args.min_face and sharpness >= self.args.min_sharpness and (30.0 <= luminance <= 230.0)
                 score = 0.0
                 if self.mode == "check":
                     if valid and self.gallery:

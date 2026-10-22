@@ -54,7 +54,9 @@ A zero-dependency Python HTTP portal accessible via any local browser:
 - **Audited Corrections & Voiding**: Modify or void erroneous entries. Every change strictly requires an admin name and reason, which is permanently logged to `audit_log`.
 - **Manual Fallback**: Record manual attendance events for employees who missed badge scanning or during camera maintenance.
 - **RFC 4180 CSV Export**: One-click download of attendance logs for payroll or offline analysis.
-- **Backups & Disaster Recovery**: Dedicated UI tab to create live transactionally consistent database backups into `data/backups/` and restore directly from any point-in-time snapshot with automated schema & integrity validation.
+- **Backups & Data Retention**: Dedicated UI tab to create live transactionally consistent database backups into `data/backups/`, restore from point-in-time snapshots, and safely purge obsolete records with automated pre-purge backups.
+- **Enrolled Identity Management**: Remove enrolled persons directly from the web portal with automated pre-deletion backups (`data/gallery_backups/`), and optimize reference embeddings with centroid outlier pruning.
+- **Biometric Favicon**: Native SVG and standard 32x32 ICO icons served at `/favicon.svg` and `/favicon.ico` for clean browser bookmarking.
 
 ---
 

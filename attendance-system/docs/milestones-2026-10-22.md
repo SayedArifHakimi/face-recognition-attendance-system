@@ -118,14 +118,21 @@ The modernized system moves to an open-set, privacy-preserving edge architecture
   - False Accepts (FAR / Mismatch): **0 (0.00%)**.
   - Empirically and mathematically proves that threshold $\tau = 0.50$ and margin $\delta = 0.08$ yield zero false accepts on this enrolled dataset.
 
-### H. Automated Verification Suite Expansion (25 Tests)
-- `test_face_id.py`: 100% PASS (Matching logic, timed capture phases, admin settings, gallery deletion).
-- `test_attendance.py`: 100% PASS (9/9 tests: transactions, cooldowns, idempotency, audit trail, summary, CSV export, live backup, point-in-time restore drill, and corruption handling).
-- `test_admin_web.py`: 100% PASS (6/6 tests: index page, API summary, API events, manual entry, corrections, reconciliation, backups, and restore API).
+### H. Automated Verification Suite Expansion (33 Tests)
+- `test_face_id.py`: 100% PASS (Matching logic, timed capture phases, admin settings, gallery deletion, luminance gating).
+- `test_attendance.py`: 100% PASS (12/12 tests: transactions, cooldowns, idempotency, audit trail, summary, CSV export, live backup, point-in-time restore drill, corruption handling, purge with auto-backup, void purging, and gallery person deletion with backup).
+- `test_admin_web.py`: 100% PASS (10/10 tests: index page, API summary, API events, manual entry, corrections, reconciliation, backups, restore API, favicon endpoints, purge endpoint, gallery delete endpoint, and maintenance audit log).
 - `test_liveness.py`: 100% PASS (4/4 tests: frontal head pose, turned pose, 5-point landmarks, micro-motion variance tracking).
-- `test_evaluate_gallery.py`: 100% PASS (6/6 tests: matrix normalization, distribution stats, pairwise matrices, LOOCV accuracy, parameter sweeps, and format validation).
-- `hce_check.py`: Single command verifying all 25 unittests, Face ID regressions, diagnostics, gallery calibration, and biometric git privacy.
+- `test_evaluate_gallery.py`: 100% PASS (7/7 tests: matrix normalization, distribution stats, pairwise matrices, LOOCV accuracy, parameter sweeps, format validation, and centroid outlier pruning).
+- `hce_check.py`: Single command verifying all 33 unittests, Face ID regressions, diagnostics, gallery calibration, and biometric git privacy.
 
-### I. Portfolio Case Study Synchronization (`sayed-portfolio`)
+### I. Data Retention Suite & Web Portal Favicon
+- **Website Favicon**: Created biometric retina/scan iconography in SVG and standard 32x32 ICO (`static/favicon.svg`, `static/favicon.ico`), eliminating generic blank document icons in browser bookmarks.
+- **Event Retention Purge**: Added `purge_events()` in `attendance_db.py` and `POST /api/purge` in `admin_web.py`. Automatically takes a point-in-time snapshot backup (`backup_db()`) prior to executing deletes, records an immutable record in `maintenance_log`, and reclaims page storage with `VACUUM`.
+- **Enrolled Person Removal on Web UI**: Added `delete_gallery_person()` and `POST /api/gallery/delete` with confirmation modal and automatic pre-deletion `gallery_backup_*.json`.
+- **Centroid Outlier Pruner**: Added `prune_gallery_outliers()` to trim embeddings with centroid cosine similarity $< 0.45$.
+- **Pre-Inference Exposure Quality Gating**: Added luminance check ($30 \le \bar{L} \le 230$) in `face_id.py` and `admin_web.py` to reject heavily backlit or bleached frames.
+
+### J. Portfolio Case Study Synchronization (`sayed-portfolio`)
 - [projects/face-recognition.html](file:///e:/Hermes-Profiles/sayed-portfolio/projects/face-recognition.html) and [index.html](file:///e:/Hermes-Profiles/sayed-portfolio/index.html) updated cohesively.
 - Preserves full compliance with all portfolio guidelines: exactly 6 case sections, editorial styling, zero external dependencies, no published biometric data, and honest labeling of prototype boundaries.

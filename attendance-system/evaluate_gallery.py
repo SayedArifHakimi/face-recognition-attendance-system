@@ -4,6 +4,7 @@ import json
 import math
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Tuple, Any, Optional
 import numpy as np
@@ -212,6 +213,89 @@ def run_margin_sweep(
     return results
 
 
+def prune_gallery_outliers(
+    gallery_path: Path,
+    min_similarity: float = 0.45,
+    db_path: Optional[Path] = None,
+    actor: str = "Admin",
+) -> Tuple[bool, str, Dict[str, Any]]:
+    """
+    Compute identity centroids and prune reference embeddings with cosine similarity < min_similarity.
+    Saves an automatic timestamped pre-prune backup.
+    """
+    if not gallery_path.exists():
+        return False, f"Gallery file not found: {gallery_path}", {}
+
+    try:
+        with open(gallery_path, "r", encoding="utf-8") as f:
+            gallery = json.load(f)
+    except Exception as e:
+        return False, f"Failed to read gallery: {e}", {}
+
+    # Create backup before pruning
+    backup_dir = gallery_path.parent / "gallery_backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = backup_dir / f"gallery_pre_prune_{timestamp}.json"
+    with open(backup_file, "w", encoding="utf-8") as f:
+        json.dump(gallery, f, indent=2)
+
+    stats = {}
+    pruned_gallery = {}
+    total_removed = 0
+    total_kept = 0
+
+    for name, refs in gallery.items():
+        if not refs:
+            continue
+        X = np.array(refs, dtype=np.float32)
+        norms = np.linalg.norm(X, axis=1, keepdims=True)
+        norms[norms == 0] = 1.0
+        X_norm = X / norms
+
+        centroid = np.mean(X_norm, axis=0)
+        c_norm = np.linalg.norm(centroid)
+        if c_norm > 0:
+            centroid /= c_norm
+
+        sims = np.dot(X_norm, centroid)
+        keep_mask = (sims >= min_similarity)
+        kept_refs = [refs[idx] for idx, keep in enumerate(keep_mask) if keep]
+        removed_count = len(refs) - len(kept_refs)
+
+        pruned_gallery[name] = kept_refs
+        total_removed += removed_count
+        total_kept += len(kept_refs)
+        stats[name] = {
+            "original": len(refs),
+            "kept": len(kept_refs),
+            "removed": removed_count,
+            "min_sim_to_centroid": float(np.min(sims)),
+            "mean_sim_to_centroid": float(np.mean(sims)),
+        }
+
+    temp_file = gallery_path.with_suffix(".tmp")
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(pruned_gallery, f, indent=2)
+    temp_file.replace(gallery_path)
+
+    try:
+        from attendance_db import db_session, DEFAULT_DB_PATH
+        target_db = db_path if db_path is not None else DEFAULT_DB_PATH
+        if target_db.exists():
+            now_iso = datetime.now(timezone.utc).astimezone().isoformat()
+            with db_session(target_db) as conn:
+                with conn:
+                    conn.execute("""
+                        INSERT INTO maintenance_log (operation, records_affected, actor, reason, backup_file, performed_at)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    """, ("PURGE", total_removed, actor, f"Gallery outlier pruning (min_sim={min_similarity})", backup_file.name, now_iso))
+    except Exception:
+        pass
+
+    return True, f"Pruned {total_removed} outlier embedding(s). {total_kept} embeddings retained. Backup: {backup_file.name}", stats
+
+
 def print_report(
     gallery_path: Path,
     threshold: float = 0.50,
@@ -332,11 +416,20 @@ def main():
     parser.add_argument("--threshold", type=float, default=0.50, help="Cosine threshold (default: 0.50)")
     parser.add_argument("--margin", type=float, default=0.08, help="Ambiguity margin (default: 0.08)")
     parser.add_argument("--sweep", action="store_true", help="Run full threshold and margin sensitivity sweeps")
+    parser.add_argument("--prune", action="store_true", help="Prune noisy outlier embeddings from gallery")
+    parser.add_argument("--min-sim", type=float, default=0.45, help="Minimum similarity to centroid for pruning (default: 0.45)")
     args = parser.parse_args()
 
     if not args.gallery.exists():
         print(f"ERROR: Gallery file not found at {args.gallery}", file=sys.stderr)
         sys.exit(1)
+
+    if args.prune:
+        ok, msg, stats = prune_gallery_outliers(args.gallery, min_similarity=args.min_sim)
+        print(f"\n[GALLERY OPTIMIZER] {msg}")
+        for name, s in stats.items():
+            print(f"  - {name}: kept {s['kept']}/{s['original']} (pruned {s['removed']} outliers)")
+        print()
 
     ok = print_report(
         gallery_path=args.gallery,

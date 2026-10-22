@@ -12,6 +12,7 @@ from evaluate_gallery import (
     run_loocv,
     run_threshold_sweep,
     run_margin_sweep,
+    prune_gallery_outliers,
 )
 
 
@@ -123,6 +124,37 @@ class TestEvaluateGallery(unittest.TestCase):
             json.dump({"Alice": [[1.0, 0.0]]}, f)
         with self.assertRaises(ValueError):
             load_gallery_matrix(bad_file)
+
+    def test_prune_gallery_outliers(self):
+        # Inject a noisy outlier embedding for Alice (orthogonal vector e_10)
+        with open(self.gallery_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        outlier = [0.0] * 128
+        outlier[10] = 1.0  # orthogonal to Alice (e_0) -> cosine similarity ~ 0.0
+        data["Alice"].append(outlier)
+        with open(self.gallery_path, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+
+        # Before pruning: Alice has 6 samples
+        self.assertEqual(len(data["Alice"]), 6)
+
+        ok, msg, stats = prune_gallery_outliers(self.gallery_path, min_similarity=0.45)
+        self.assertTrue(ok)
+        self.assertEqual(stats["Alice"]["original"], 6)
+        self.assertEqual(stats["Alice"]["kept"], 5)
+        self.assertEqual(stats["Alice"]["removed"], 1)
+        self.assertEqual(stats["Bob"]["removed"], 0)
+
+        # Confirm gallery file updated
+        with open(self.gallery_path, "r", encoding="utf-8") as f:
+            pruned = json.load(f)
+        self.assertEqual(len(pruned["Alice"]), 5)
+
+        # Confirm backup was saved
+        backup_dir = self.gallery_path.parent / "gallery_backups"
+        self.assertTrue(backup_dir.exists())
+        backups = list(backup_dir.glob("gallery_pre_prune_*.json"))
+        self.assertGreaterEqual(len(backups), 1)
 
 
 if __name__ == "__main__":

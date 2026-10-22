@@ -51,10 +51,12 @@ An edge computer vision and transactional attendance kiosk, reminiscing and re-e
                                               ▲
                                               │
                               [admin_web.py (Port 8080)]
-                              - Live Filterable Logs
+                              - Live Filterable Logs & Biometric Favicon
                               - Daily Attendance Reconciliation
                               - Audited Correction & Voiding
-                              - Manual Entry Fallback
+                              - Data Retention & Automated Purge (Pre-Backup)
+                              - Gallery Person Removal & Outlier Pruning
+                              - Point-in-Time Restore & Backup
                               - RFC 4180 CSV Export
 ```
 

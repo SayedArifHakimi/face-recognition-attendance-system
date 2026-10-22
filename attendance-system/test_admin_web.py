@@ -27,8 +27,13 @@ class TestAdminWeb(unittest.TestCase):
         # Patch DEFAULT_DB_PATH in admin_web and attendance_db
         cls.patcher = patch("admin_web.DEFAULT_DB_PATH", cls.db_path)
         cls.patcher_db = patch("attendance_db.DEFAULT_DB_PATH", cls.db_path)
+        cls.gallery_path = Path(cls.temp_dir.name) / "test_gallery.json"
+        with open(cls.gallery_path, "w", encoding="utf-8") as f:
+            json.dump({"Alice": [[1.0] * 128], "Bob": [[0.5] * 128]}, f)
+        cls.patcher_gal = patch("admin_web.GALLERY_FILE", cls.gallery_path)
         cls.patcher.start()
         cls.patcher_db.start()
+        cls.patcher_gal.start()
 
         # Start background HTTP server on port 0 (OS picks free port)
         cls.server = HTTPServer(("127.0.0.1", 0), AttendanceHTTPHandler)
@@ -43,6 +48,7 @@ class TestAdminWeb(unittest.TestCase):
         cls.server.server_close()
         cls.patcher.stop()
         cls.patcher_db.stop()
+        cls.patcher_gal.stop()
         cls.temp_dir.cleanup()
 
     def test_get_index(self):
@@ -165,6 +171,75 @@ class TestAdminWeb(unittest.TestCase):
             rdata = json.loads(resp.read().decode("utf-8"))
             self.assertTrue(rdata["success"])
             self.assertIn("Successfully restored", rdata["message"])
+
+    def test_favicon_endpoints(self):
+        req_svg = urllib.request.urlopen(f"{self.base_url}/favicon.svg")
+        self.assertEqual(req_svg.status, 200)
+        self.assertEqual(req_svg.headers.get("Content-Type"), "image/svg+xml")
+        svg_content = req_svg.read().decode("utf-8")
+        self.assertIn("<svg", svg_content)
+
+        req_ico = urllib.request.urlopen(f"{self.base_url}/favicon.ico")
+        self.assertEqual(req_ico.status, 200)
+        self.assertEqual(req_ico.headers.get("Content-Type"), "image/x-icon")
+        self.assertGreater(len(req_ico.read()), 0)
+
+    def test_purge_endpoint(self):
+        purge_payload = json.dumps({
+            "older_than": "2026-06-01",
+            "actor": "SecurityLead",
+            "reason": "Purge test events"
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}/api/purge",
+            data=purge_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data["success"])
+            self.assertIn("purged_count", data)
+
+    def test_gallery_delete_endpoint(self):
+        del_payload = json.dumps({
+            "person_name": "Alice",
+            "actor": "Admin",
+            "reason": "Test departure"
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}/api/gallery/delete",
+            data=del_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data["success"])
+            self.assertEqual(data["count"], 1)
+
+    def test_maintenance_endpoint(self):
+        # Trigger an action first to ensure at least one maintenance record exists
+        purge_payload = json.dumps({
+            "older_than": "2026-01-01",
+            "actor": "AuditBot",
+            "reason": "Initial test purge"
+        }).encode("utf-8")
+        req_p = urllib.request.Request(
+            f"{self.base_url}/api/purge",
+            data=purge_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        urllib.request.urlopen(req_p).read()
+
+        req = urllib.request.urlopen(f"{self.base_url}/api/maintenance")
+        self.assertEqual(req.status, 200)
+        logs = json.loads(req.read().decode("utf-8"))
+        self.assertIsInstance(logs, list)
+        self.assertGreaterEqual(len(logs), 1)
 
 
 if __name__ == "__main__":

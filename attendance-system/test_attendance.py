@@ -17,6 +17,9 @@ from attendance_db import (
     backup_db,
     list_backups,
     restore_db,
+    purge_events,
+    get_maintenance_log,
+    delete_gallery_person,
 )
 
 
@@ -200,6 +203,89 @@ class TestAttendanceDB(unittest.TestCase):
         ok, msg = restore_db(empty_sqlite, db_path=self.db_path)
         self.assertFalse(ok)
         self.assertIn("missing required attendance tables", msg.lower())
+
+    def test_purge_events_with_auto_backup(self):
+        # Insert old and recent events
+        record_event("Alice", "CHECK_IN", event_time="2026-01-01T08:00:00", db_path=self.db_path)
+        record_event("Bob", "CHECK_IN", event_time="2026-01-02T08:30:00", db_path=self.db_path)
+        record_event("Charlie", "CHECK_IN", event_time="2026-10-22T09:00:00", db_path=self.db_path)
+
+        all_events = get_events(db_path=self.db_path)
+        self.assertEqual(len(all_events), 3)
+
+        # Purge records older than 2026-06-01
+        ok, msg, count, backup_name = purge_events(
+            older_than_date="2026-06-01",
+            actor="ComplianceOfficer",
+            reason="GDPR retention 180 days",
+            db_path=self.db_path
+        )
+        self.assertTrue(ok)
+        self.assertEqual(count, 2)
+        self.assertIsNotNone(backup_name)
+
+        # Check remaining events
+        remaining = get_events(db_path=self.db_path)
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["person_name"], "Charlie")
+
+        # Check maintenance audit log
+        logs = get_maintenance_log(db_path=self.db_path)
+        self.assertEqual(len(logs), 1)
+        self.assertEqual(logs[0]["operation"], "PURGE")
+        self.assertEqual(logs[0]["records_affected"], 2)
+        self.assertEqual(logs[0]["actor"], "ComplianceOfficer")
+        self.assertIn("GDPR retention", logs[0]["reason"])
+
+    def test_purge_void_records(self):
+        ok, _, evt1 = record_event("Alice", "CHECK_IN", db_path=self.db_path)
+        ok, _, evt2 = record_event("Bob", "CHECK_IN", db_path=self.db_path)
+        correct_event(evt1["id"], new_status="VOID", actor="Admin", reason="Test mistake", db_path=self.db_path)
+
+        ok, msg, count, _ = purge_events(
+            status_only="VOID",
+            actor="Admin",
+            reason="Purge voided test events",
+            auto_backup=False,
+            db_path=self.db_path
+        )
+        self.assertTrue(ok)
+        self.assertEqual(count, 1)
+
+        remaining = get_events(db_path=self.db_path)
+        self.assertEqual(len(remaining), 1)
+        self.assertEqual(remaining[0]["person_name"], "Bob")
+
+    def test_delete_gallery_person_with_backup(self):
+        import json
+        gallery_file = Path(self.temp_dir.name) / "gallery.json"
+        gallery_data = {
+            "Alice": [[1.0] * 128, [0.9] * 128],
+            "Bob": [[0.5] * 128]
+        }
+        with open(gallery_file, "w", encoding="utf-8") as f:
+            json.dump(gallery_data, f)
+
+        ok, msg, count, bname = delete_gallery_person(
+            "Alice",
+            actor="HRAdmin",
+            reason="Departed organization",
+            gallery_path=gallery_file,
+            db_path=self.db_path
+        )
+        self.assertTrue(ok)
+        self.assertEqual(count, 2)
+        self.assertIsNotNone(bname)
+
+        # Confirm gallery updated
+        with open(gallery_file, "r", encoding="utf-8") as f:
+            updated = json.load(f)
+        self.assertNotIn("Alice", updated)
+        self.assertIn("Bob", updated)
+
+        # Confirm maintenance log recorded
+        logs = get_maintenance_log(db_path=self.db_path)
+        self.assertTrue(any(l["operation"] == "GALLERY_DELETE" and "Alice" in l["reason"] for l in logs))
 
 
 if __name__ == "__main__":

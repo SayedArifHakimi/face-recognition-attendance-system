@@ -64,6 +64,19 @@ def init_db(db_path: Optional[Path] = None) -> None:
 
                 CREATE INDEX IF NOT EXISTS idx_audit_event 
                     ON audit_log(event_id);
+
+                CREATE TABLE IF NOT EXISTS maintenance_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    operation TEXT NOT NULL CHECK(operation IN ('PURGE', 'GALLERY_DELETE', 'VACUUM', 'RESTORE')),
+                    records_affected INTEGER NOT NULL DEFAULT 0,
+                    actor TEXT NOT NULL DEFAULT 'Admin',
+                    reason TEXT NOT NULL,
+                    backup_file TEXT,
+                    performed_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_maint_time 
+                    ON maintenance_log(performed_at);
             """)
 
 
@@ -465,4 +478,142 @@ def restore_db(backup_path: Path, db_path: Optional[Path] = None) -> Tuple[bool,
         return True, f"Successfully restored database from {backup_path.name}"
     except Exception as e:
         return False, f"Restore failed: {e}"
+
+
+def purge_events(
+    older_than_date: Optional[str] = None,
+    status_only: Optional[str] = None,
+    actor: str = "Admin",
+    reason: str = "Data retention policy",
+    auto_backup: bool = True,
+    db_path: Optional[Path] = None
+) -> Tuple[bool, str, int, Optional[str]]:
+    """
+    Safely delete attendance events based on date or status criteria.
+    Creates an automated point-in-time snapshot backup prior to deletion,
+    records an immutable audit entry in maintenance_log, and reclaims space with VACUUM.
+    Returns (success, message, purged_count, backup_filename).
+    """
+    target_path = db_path if db_path is not None else DEFAULT_DB_PATH
+    if not older_than_date and not status_only:
+        return False, "Must specify an older_than_date or status_only filter to purge", 0, None
+
+    backup_file_name = None
+    if auto_backup:
+        try:
+            bfile = backup_db(db_path=target_path)
+            backup_file_name = bfile.name
+        except Exception as e:
+            return False, f"Automated pre-purge backup failed: {e}", 0, None
+
+    clauses = []
+    params = []
+    if older_than_date:
+        clean_date = older_than_date if "T" in older_than_date else f"{older_than_date}T00:00:00"
+        clauses.append("event_time < ?")
+        params.append(clean_date)
+
+    if status_only:
+        clean_status = status_only.strip().upper()
+        if clean_status not in ("VOID", "RECORDED", "CORRECTED"):
+            return False, f"Invalid status filter: {status_only}", 0, backup_file_name
+        clauses.append("status = ?")
+        params.append(clean_status)
+
+    where_sql = " AND ".join(clauses)
+    purged_count = 0
+    now_iso = datetime.now(timezone.utc).astimezone().isoformat()
+
+    with db_session(target_path) as conn:
+        with conn:
+            cursor = conn.cursor()
+            res = cursor.execute(f"SELECT COUNT(*) FROM attendance_events WHERE {where_sql}", params).fetchone()
+            purged_count = res[0] if res else 0
+
+            if purged_count > 0:
+                cursor.execute(f"DELETE FROM attendance_events WHERE {where_sql}", params)
+
+            cursor.execute("""
+                INSERT INTO maintenance_log (operation, records_affected, actor, reason, backup_file, performed_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, ("PURGE", purged_count, actor, reason, backup_file_name, now_iso))
+
+    try:
+        with db_session(target_path) as conn:
+            conn.execute("VACUUM;")
+    except Exception:
+        pass
+
+    return True, f"Successfully purged {purged_count} event(s). Auto-backup created.", purged_count, backup_file_name
+
+
+def get_maintenance_log(limit: int = 50, db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """Retrieve system maintenance and purge history."""
+    with db_session(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM maintenance_log ORDER BY performed_at DESC LIMIT ?
+        """, (limit,))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def delete_gallery_person(
+    person_name: str,
+    actor: str = "Admin",
+    reason: str = "Manual gallery deletion",
+    gallery_path: Optional[Path] = None,
+    db_path: Optional[Path] = None
+) -> Tuple[bool, str, int, Optional[str]]:
+    """
+    Remove an enrolled identity from the gallery with automated backup and maintenance logging.
+    Returns (success, message, count_removed, backup_filename).
+    """
+    target_gallery = gallery_path if gallery_path is not None else (DEFAULT_DB_PATH.parent / "gallery.json")
+    if not target_gallery.exists():
+        return False, "Gallery file does not exist", 0, None
+
+    clean_name = person_name.strip()
+    if not clean_name:
+        return False, "Person name is required", 0, None
+
+    try:
+        with open(target_gallery, "r", encoding="utf-8") as f:
+            gallery = json.load(f)
+    except Exception as e:
+        return False, f"Failed to read gallery: {e}", 0, None
+
+    if clean_name not in gallery:
+        return False, f"Person '{clean_name}' not found in enrolled gallery", 0, None
+
+    count_removed = len(gallery[clean_name])
+
+    # Automatic gallery backup
+    backup_dir = target_gallery.parent / "gallery_backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backup_file = backup_dir / f"gallery_backup_{timestamp}.json"
+    with open(backup_file, "w", encoding="utf-8") as f:
+        json.dump(gallery, f, indent=2)
+
+    # Remove person and write updated gallery atomically
+    del gallery[clean_name]
+    temp_file = target_gallery.with_suffix(".tmp")
+    with open(temp_file, "w", encoding="utf-8") as f:
+        json.dump(gallery, f, indent=2)
+    temp_file.replace(target_gallery)
+
+    # Record in maintenance log
+    now_iso = datetime.now(timezone.utc).astimezone().isoformat()
+    try:
+        with db_session(db_path) as conn:
+            with conn:
+                conn.execute("""
+                    INSERT INTO maintenance_log (operation, records_affected, actor, reason, backup_file, performed_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, ("GALLERY_DELETE", count_removed, actor, f"{reason}: removed {clean_name}", backup_file.name, now_iso))
+    except Exception:
+        pass
+
+    return True, f"Successfully removed '{clean_name}' ({count_removed} reference embeddings deleted). Backup created.", count_removed, backup_file.name
+
 

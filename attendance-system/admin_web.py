@@ -25,8 +25,12 @@ from attendance_db import (
     backup_db,
     list_backups,
     restore_db,
+    purge_events,
+    get_maintenance_log,
+    delete_gallery_person,
     DEFAULT_DB_PATH,
 )
+from evaluate_gallery import prune_gallery_outliers
 
 ROOT = Path(__file__).resolve().parent
 GALLERY_FILE = ROOT / "data" / "gallery.json"
@@ -54,6 +58,8 @@ HTML_TEMPLATE = """<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Face Attendance System — Localhost Portal</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
   <style>
     :root {
       --bg: #f8f9fa;
@@ -316,7 +322,7 @@ HTML_TEMPLATE = """<!doctype html>
       <button class="tab" onclick="switchTab('gallery')">Enrolled Users</button>
       <button class="tab" onclick="switchTab('diagnostics')">Diagnostics &amp; Health</button>
       <button class="tab" onclick="switchTab('audit')">Audit Trail</button>
-      <button class="tab" onclick="switchTab('backups')">Backups &amp; Recovery</button>
+      <button class="tab" onclick="switchTab('backups')">Backups &amp; Retention</button>
     </div>
 
     <!-- Tab: Live Web Kiosk -->
@@ -452,7 +458,10 @@ HTML_TEMPLATE = """<!doctype html>
     <div id="tabGallery" class="card" style="display: none;">
       <div class="card-header">
         <span class="card-title">Enrolled Persons in Gallery</span>
-        <button class="btn btn-sm" onclick="fetchGallery()">Refresh</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-sm btn-primary" onclick="optimizeGallery()">⚡ Optimize Outliers</button>
+          <button class="btn btn-sm" onclick="fetchGallery()">Refresh</button>
+        </div>
       </div>
       <div class="card-body">
         <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 14px;">
@@ -502,13 +511,13 @@ HTML_TEMPLATE = """<!doctype html>
       </div>
     </div>
 
-    <!-- Tab: Backups & Disaster Recovery -->
+    <!-- Tab: Backups & Data Retention -->
     <div id="tabBackups" class="card" style="display: none;">
       <div class="card-header">
-        <span class="card-title">Database Snapshots &amp; Disaster Recovery</span>
+        <span class="card-title">Database Snapshots &amp; Data Retention</span>
         <div style="display: flex; gap: 8px;">
           <button class="btn btn-sm btn-primary" onclick="triggerBackup()">+ Create New Backup</button>
-          <button class="btn btn-sm" onclick="fetchBackups()">Refresh</button>
+          <button class="btn btn-sm" onclick="fetchBackups(); fetchMaintenance();">Refresh</button>
         </div>
       </div>
       <div class="card-body">
@@ -530,6 +539,96 @@ HTML_TEMPLATE = """<!doctype html>
             </tbody>
           </table>
         </div>
+
+        <!-- Data Retention Purge Section -->
+        <div style="margin-top: 28px; border-top: 1px solid var(--border); padding-top: 20px;">
+          <h4 style="font-size: 1rem; font-weight: 600; margin-bottom: 6px;">Data Retention Policy &amp; Event Purge</h4>
+          <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px;">
+            Permanently delete obsolete records. An automated point-in-time snapshot backup is created before deletion, and a tamper-evident audit record is logged.
+          </p>
+          <div class="filter-bar" style="background: #f8fafc; padding: 14px; border-radius: 6px; border: 1px solid var(--border);">
+            <div class="form-group">
+              <label for="purgeOlderThan">Purge Events Before Date</label>
+              <input type="date" id="purgeOlderThan" class="form-control">
+            </div>
+            <div class="form-group">
+              <label for="purgeStatus">Status Filter</label>
+              <select id="purgeStatus" class="form-control">
+                <option value="">All Statuses</option>
+                <option value="VOID">Only VOID Records</option>
+                <option value="RECORDED">Only RECORDED Records</option>
+                <option value="CORRECTED">Only CORRECTED Records</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="purgeActor">Admin Name</label>
+              <input type="text" id="purgeActor" class="form-control" value="Admin">
+            </div>
+            <div class="form-group">
+              <label for="purgeReason">Retention / Purge Reason</label>
+              <input type="text" id="purgeReason" class="form-control" placeholder="e.g. 90-day retention cleanup">
+            </div>
+            <div class="form-group" style="justify-content: flex-end;">
+              <button class="btn btn-danger" onclick="submitPurge()">🗑️ Purge Records (Auto-Backs Up First)</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Maintenance & Retention Audit Log -->
+        <div style="margin-top: 28px; border-top: 1px solid var(--border); padding-top: 20px;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h4 style="font-size: 1rem; font-weight: 600;">System Maintenance &amp; Retention Audit Log</h4>
+            <button class="btn btn-sm" onclick="fetchMaintenance()">Refresh</button>
+          </div>
+          <div style="overflow-x: auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Operation</th>
+                  <th>Records Affected</th>
+                  <th>Actor</th>
+                  <th>Reason</th>
+                  <th>Pre-Action Backup</th>
+                  <th>Executed At</th>
+                </tr>
+              </thead>
+              <tbody id="maintTableBody">
+                <tr><td colspan="6" class="empty-state">Loading maintenance log...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Delete Person Modal -->
+  <div class="modal-overlay" id="deletePersonModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 style="color: #dc2626;">Remove Enrolled Person</h3>
+        <button class="btn btn-sm" onclick="closeModal('deletePersonModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="background: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 6px; margin-bottom: 14px; font-size: 0.85rem; color: #991b1b;">
+          ⚠️ <strong>Caution:</strong> Deleting an enrolled person removes all their facial reference embeddings from the active recognition gallery. An automatic point-in-time backup of <code>gallery.json</code> will be saved to <code>data/gallery_backups/</code>.
+        </div>
+        <div class="form-group">
+          <label>Target Identity</label>
+          <div id="deletePersonDesc" style="font-weight: 700; font-size: 1.1rem; color: var(--primary);">-</div>
+        </div>
+        <div class="form-group">
+          <label for="deletePersonActor">Admin Name</label>
+          <input type="text" id="deletePersonActor" class="form-control" value="Admin">
+        </div>
+        <div class="form-group">
+          <label for="deletePersonReason">Reason for Deletion (Required)</label>
+          <input type="text" id="deletePersonReason" class="form-control" placeholder="e.g. Employee offboarding / departure">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('deletePersonModal')">Cancel</button>
+        <button class="btn btn-danger" onclick="submitDeletePerson()">Confirm Permanent Deletion</button>
       </div>
     </div>
   </div>
@@ -650,7 +749,7 @@ HTML_TEMPLATE = """<!doctype html>
       if (tabId === 'audit') fetchAudit();
       if (tabId === 'diagnostics') fetchDiagnostics();
       if (tabId === 'events') fetchEvents();
-      if (tabId === 'backups') fetchBackups();
+      if (tabId === 'backups') { fetchBackups(); fetchMaintenance(); }
     }
 
     function toggleCameraStream() {
@@ -859,9 +958,136 @@ HTML_TEMPLATE = """<!doctype html>
         names.forEach(name => {
           const pill = document.createElement('div');
           pill.className = 'pill';
-          pill.innerText = `${name} (${data[name]} references)`;
+          pill.style.display = 'inline-flex';
+          pill.style.alignItems = 'center';
+          pill.style.gap = '10px';
+          pill.innerHTML = `
+            <span><strong>${escapeHtml(name)}</strong> (${data[name]} refs)</span>
+            <button class="btn btn-sm btn-danger" style="padding: 1px 6px; font-size: 0.7rem;" onclick="openDeletePersonModal('${escapeHtml(name)}', ${data[name]})">✕ Remove</button>
+          `;
           list.appendChild(pill);
         });
+      }
+    }
+
+    let deleteTargetPerson = null;
+    function openDeletePersonModal(name, count) {
+      deleteTargetPerson = name;
+      document.getElementById('deletePersonDesc').innerText = `${name} (${count} reference embeddings)`;
+      document.getElementById('deletePersonActor').value = 'Admin';
+      document.getElementById('deletePersonReason').value = 'Administrative deletion';
+      document.getElementById('deletePersonModal').classList.add('open');
+    }
+
+    async function submitDeletePerson() {
+      if (!deleteTargetPerson) return;
+      const actor = document.getElementById('deletePersonActor').value.trim() || 'Admin';
+      const reason = document.getElementById('deletePersonReason').value.trim() || 'Administrative deletion';
+      
+      const res = await fetch('/api/gallery/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ person_name: deleteTargetPerson, actor, reason })
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        alert(data.message);
+        closeModal('deletePersonModal');
+        fetchGallery();
+        fetchMaintenance();
+      } else {
+        alert(data.error || 'Failed to remove person');
+      }
+    }
+
+    async function optimizeGallery() {
+      if (!confirm('Optimize Gallery: This will prune noisy outlier embeddings with low centroid similarity (< 0.45).\\nAn automatic pre-prune backup of gallery.json will be saved.\\n\\nDo you want to proceed?')) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/gallery/optimize', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ min_similarity: 0.45, actor: 'Admin' })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert('Gallery Optimized: ' + data.message);
+          fetchGallery();
+          fetchMaintenance();
+        } else {
+          alert('Optimization failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Network error during optimization: ' + err);
+      }
+    }
+
+    async function submitPurge() {
+      const olderThan = document.getElementById('purgeOlderThan').value;
+      const statusOnly = document.getElementById('purgeStatus').value;
+      const actor = document.getElementById('purgeActor').value.trim() || 'Admin';
+      const reason = document.getElementById('purgeReason').value.trim() || 'Data retention policy';
+
+      if (!olderThan && !statusOnly) {
+        alert('Please specify a date threshold or a status filter (e.g. VOID only) to purge.');
+        return;
+      }
+
+      const desc = olderThan ? `older than ${olderThan}` : `with status '${statusOnly}'`;
+      if (!confirm(`CAUTION: You are about to permanently purge attendance records ${desc}.\\nAn automatic backup snapshot will be created first.\\n\\nDo you want to proceed?`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch('/api/purge', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            older_than: olderThan || null,
+            status_only: statusOnly || null,
+            actor,
+            reason
+          })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert(`Purge Completed: ${data.purged_count} records purged.\\nAuto-Backup Snapshot: ${data.backup_path}`);
+          fetchSummary();
+          fetchEvents();
+          fetchBackups();
+          fetchMaintenance();
+        } else {
+          alert('Purge failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Network error during purge: ' + err);
+      }
+    }
+
+    async function fetchMaintenance() {
+      const tbody = document.getElementById('maintTableBody');
+      if (!tbody) return;
+      try {
+        const res = await fetch('/api/maintenance');
+        const items = await res.json();
+        if (items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No maintenance records yet</td></tr>';
+          return;
+        }
+        tbody.innerHTML = items.map(m => {
+          const timeFmt = m.performed_at.replace('T', ' ').slice(0, 19);
+          return `<tr>
+            <td><strong>${escapeHtml(m.operation)}</strong></td>
+            <td>${m.records_affected}</td>
+            <td>${escapeHtml(m.actor)}</td>
+            <td>${escapeHtml(m.reason)}</td>
+            <td><code>${escapeHtml(m.backup_file || '-')}</code></td>
+            <td><small>${timeFmt}</small></td>
+          </tr>`;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty-state">Failed to load maintenance log</td></tr>';
       }
     }
 
@@ -1199,8 +1425,10 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
                         identity = "Unknown"
                         score = 0.0
                         aligned = recognizer.alignCrop(frame, face)
-                        sharpness = cv2.Laplacian(cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()
-                        if min(w, h) >= 80 and sharpness >= 50 and gallery:
+                        gray = cv2.cvtColor(aligned, cv2.COLOR_BGR2GRAY)
+                        sharpness = cv2.Laplacian(gray, cv2.CV_64F).var()
+                        luminance = float(gray.mean())
+                        if min(w, h) >= 80 and sharpness >= 50 and (30.0 <= luminance <= 230.0) and gallery:
                             feature = normalize(recognizer.feature(aligned).ravel())
                             identity, score = identify(feature, gallery)
                         color = (0, 200, 0) if identity != "Unknown" else (0, 165, 255)
@@ -1267,6 +1495,35 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+            return
+
+        if path == "/favicon.svg":
+            svg_file = ROOT / "static" / "favicon.svg"
+            if svg_file.exists():
+                payload = svg_file.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+        if path == "/favicon.ico":
+            ico_file = ROOT / "static" / "favicon.ico"
+            if ico_file.exists():
+                payload = ico_file.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/x-icon")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+        if path == "/api/maintenance":
+            logs = get_maintenance_log()
+            self.send_json(logs)
             return
 
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
@@ -1373,6 +1630,52 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
             ok, msg = restore_db(backup_file)
             if ok:
                 self.send_json({"success": True, "message": msg})
+            else:
+                self.send_json({"success": False, "error": msg}, status=400)
+            return
+
+        if path == "/api/purge":
+            older_than = payload.get("older_than") or None
+            status_only = payload.get("status_only") or None
+            actor = payload.get("actor", "Admin").strip()
+            reason = payload.get("reason", "Data retention policy").strip()
+            ok, msg, count, bname = purge_events(
+                older_than_date=older_than,
+                status_only=status_only,
+                actor=actor,
+                reason=reason
+            )
+            if ok:
+                self.send_json({"success": True, "message": msg, "purged_count": count, "backup_path": bname})
+            else:
+                self.send_json({"success": False, "error": msg}, status=400)
+            return
+
+        if path == "/api/gallery/delete":
+            person = payload.get("person_name", "").strip()
+            actor = payload.get("actor", "Admin").strip()
+            reason = payload.get("reason", "Administrative deletion").strip()
+            if not person:
+                self.send_json({"success": False, "error": "Person name is required"}, status=400)
+                return
+            ok, msg, count, bname = delete_gallery_person(
+                person_name=person,
+                actor=actor,
+                reason=reason,
+                gallery_path=GALLERY_FILE
+            )
+            if ok:
+                self.send_json({"success": True, "message": msg, "count": count, "backup_path": bname})
+            else:
+                self.send_json({"success": False, "error": msg}, status=400)
+            return
+
+        if path == "/api/gallery/optimize":
+            min_sim = float(payload.get("min_similarity", 0.45))
+            actor = payload.get("actor", "Admin").strip()
+            ok, msg, stats = prune_gallery_outliers(GALLERY_FILE, min_similarity=min_sim, actor=actor)
+            if ok:
+                self.send_json({"success": True, "message": msg, "stats": stats})
             else:
                 self.send_json({"success": False, "error": msg}, status=400)
             return
