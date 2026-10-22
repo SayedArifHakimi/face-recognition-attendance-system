@@ -131,6 +131,41 @@ class TestAdminWeb(unittest.TestCase):
             self.assertTrue(data["success"])
             self.assertTrue(data["backup_path"].startswith("attendance_backup_"))
 
+    def test_backup_and_restore_endpoints(self):
+        # 1. Trigger backup
+        backup_req = urllib.request.Request(
+            f"{self.base_url}/api/backup",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(backup_req) as resp:
+            self.assertEqual(resp.status, 200)
+            bdata = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(bdata["success"])
+            filename = bdata["backup_path"]
+
+        # 2. Query /api/backups
+        req_list = urllib.request.urlopen(f"{self.base_url}/api/backups")
+        self.assertEqual(req_list.status, 200)
+        backups = json.loads(req_list.read().decode("utf-8"))
+        self.assertGreaterEqual(len(backups), 1)
+        self.assertTrue(any(b["filename"] == filename for b in backups))
+
+        # 3. Post /api/restore
+        restore_payload = json.dumps({"filename": filename}).encode("utf-8")
+        restore_req = urllib.request.Request(
+            f"{self.base_url}/api/restore",
+            data=restore_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(restore_req) as resp:
+            self.assertEqual(resp.status, 200)
+            rdata = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(rdata["success"])
+            self.assertIn("Successfully restored", rdata["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

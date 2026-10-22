@@ -75,6 +75,23 @@
       "console": "integratedTerminal"
     },
     {
+      "name": "Evaluation: Empirical Gallery Calibration",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/evaluate_gallery.py",
+      "args": ["--sweep"],
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Tests: Run Evaluate Gallery Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/test_evaluate_gallery.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Tests: Run Liveness Tests",
       "type": "debugpy",
       "request": "launch",

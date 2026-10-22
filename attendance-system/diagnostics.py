@@ -80,6 +80,11 @@ def check_gallery() -> bool:
                 print(f"  OK: Gallery contains {len(gallery)} enrolled person(s):")
                 for name, refs in gallery.items():
                     print(f"      - {name}: {len(refs)} reference embeddings (128-d)")
+                if len(gallery) >= 2:
+                    from evaluate_gallery import load_gallery_matrix, run_loocv
+                    names, X, y = load_gallery_matrix(GALLERY_PATH)
+                    res = run_loocv(names, X, y, threshold=0.50, margin=0.08)
+                    print(f"  OK: Empirical LOOCV (threshold=0.50, margin=0.08): TAR={res['tar']*100:.2f}%, FAR={res['far']*100:.2f}% ({res['mismatch']} mismatches)")
             else:
                 print("  FAIL: gallery.json is not a valid JSON dictionary")
                 return False

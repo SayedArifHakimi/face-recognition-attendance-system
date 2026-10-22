@@ -9,15 +9,16 @@ Supervised face recognition and attendance kiosk prototype, modernizing the Febr
 Ensure commands are executed in PowerShell from this folder (`attendance-system`):
 
 ```powershell
-# 1. Run unit tests
-.\.venv\Scripts\python.exe test_face_id.py
-.\.venv\Scripts\python.exe test_attendance.py
-.\.venv\Scripts\python.exe test_admin_web.py
+# 1. Run mandatory HCE verification suite (25 tests + diagnostics + calibration)
+.\.venv\Scripts\python.exe hce_check.py
 
-# 2. Start the interactive Kiosk & Face ID monitor
+# 2. Run empirical gallery calibration & LOOCV
+.\.venv\Scripts\python.exe evaluate_gallery.py --sweep
+
+# 3. Start the interactive Kiosk & Face ID monitor
 .\.venv\Scripts\python.exe face_id.py
 
-# 3. Start the Admin & Audit Web Portal (in a separate terminal)
+# 4. Start the Admin & Audit Web Portal (in a separate terminal)
 .\.venv\Scripts\python.exe admin_web.py --port 8080
 ```
 
@@ -53,7 +54,7 @@ A zero-dependency Python HTTP portal accessible via any local browser:
 - **Audited Corrections & Voiding**: Modify or void erroneous entries. Every change strictly requires an admin name and reason, which is permanently logged to `audit_log`.
 - **Manual Fallback**: Record manual attendance events for employees who missed badge scanning or during camera maintenance.
 - **RFC 4180 CSV Export**: One-click download of attendance logs for payroll or offline analysis.
-- **Database Backup**: Click **Backup Snapshot** to generate a live, transactionally safe copy in `data/backups/`.
+- **Backups & Disaster Recovery**: Dedicated UI tab to create live transactionally consistent database backups into `data/backups/` and restore directly from any point-in-time snapshot with automated schema & integrity validation.
 
 ---
 

@@ -15,6 +15,8 @@ from attendance_db import (
     get_audit_trail,
     export_csv,
     backup_db,
+    list_backups,
+    restore_db,
 )
 
 
@@ -134,6 +136,70 @@ class TestAttendanceDB(unittest.TestCase):
         backup_file = backup_db(backup_dir=backup_folder, db_path=self.db_path)
         self.assertTrue(backup_file.exists())
         self.assertGreater(backup_file.stat().st_size, 0)
+
+    def test_restore_drill(self):
+        backup_folder = Path(self.temp_dir.name) / "backups"
+
+        # Populate initial events
+        record_event("Alice", "CHECK_IN", db_path=self.db_path)
+        ok, msg, evt = record_event("Bob", "CHECK_IN", db_path=self.db_path)
+        correct_event(evt["id"], new_event_type="CHECK_OUT", actor="Manager", reason="User tapped wrong button", db_path=self.db_path)
+
+        # Snapshot before catastrophic event
+        backup_file = backup_db(backup_dir=backup_folder, db_path=self.db_path)
+        self.assertTrue(backup_file.exists())
+        backups = list_backups(backup_dir=backup_folder)
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0]["filename"], backup_file.name)
+
+        # Simulate unwanted drift or corruption
+        record_event("Intruder", "CHECK_IN", db_path=self.db_path)
+        events_before_restore = get_events(db_path=self.db_path)
+        self.assertEqual(len(events_before_restore), 3)
+
+        # Restore from snapshot
+        ok, msg = restore_db(backup_file, db_path=self.db_path)
+        self.assertTrue(ok)
+        self.assertIn("Successfully restored", msg)
+
+        # Confirm state reverted exactly to snapshot (Alice and Bob present, Intruder absent)
+        restored_events = get_events(db_path=self.db_path)
+        self.assertEqual(len(restored_events), 2)
+        names = [e["person_name"] for e in restored_events]
+        self.assertIn("Alice", names)
+        self.assertIn("Bob", names)
+        self.assertNotIn("Intruder", names)
+
+        # Confirm audit log integrity is preserved
+        trails = get_audit_trail(event_id=evt["id"], db_path=self.db_path)
+        self.assertEqual(len(trails), 2)
+        self.assertEqual(trails[0]["actor"], "Manager")
+
+    def test_restore_validation_failures(self):
+        # 1. Non-existent file
+        bogus_file = Path(self.temp_dir.name) / "non_existent.db"
+        ok, msg = restore_db(bogus_file, db_path=self.db_path)
+        self.assertFalse(ok)
+        self.assertIn("not found", msg.lower())
+
+        # 2. Corrupt / non-sqlite file
+        corrupt_file = Path(self.temp_dir.name) / "corrupt.db"
+        corrupt_file.write_bytes(b"This is not a sqlite database file at all!")
+        ok, msg = restore_db(corrupt_file, db_path=self.db_path)
+        self.assertFalse(ok)
+        self.assertTrue("failed" in msg.lower() or "error" in msg.lower())
+
+        # 3. Valid SQLite file but missing attendance schema
+        empty_sqlite = Path(self.temp_dir.name) / "empty.db"
+        import sqlite3
+        conn = sqlite3.connect(str(empty_sqlite))
+        try:
+            conn.execute("CREATE TABLE dummy (id INTEGER PRIMARY KEY);")
+        finally:
+            conn.close()
+        ok, msg = restore_db(empty_sqlite, db_path=self.db_path)
+        self.assertFalse(ok)
+        self.assertIn("missing required attendance tables", msg.lower())
 
 
 if __name__ == "__main__":

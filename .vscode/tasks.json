@@ -42,6 +42,15 @@
       "problemMatcher": []
     },
     {
+      "label": "Run Biometric Gallery Calibration",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe evaluate_gallery.py --sweep",
+      "options": {
+        "cwd": "${workspaceFolder}/attendance-system"
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "Start Admin Web Portal",
       "type": "shell",
       "command": ".\\.venv\\Scripts\\python.exe admin_web.py",

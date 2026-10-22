@@ -22,7 +22,7 @@ def check_git_hygiene():
     res = subprocess.run("git status --porcelain", shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True)
     tracked_files = res.stdout.splitlines()
     for line in tracked_files:
-        if "gallery.json" in line or "attendance.db" in line or ".onnx" in line:
+        if "gallery.json" in line or "attendance.db" in line or ".onnx" in line or ".db" in line:
             print(f"[HCE] CRITICAL SECURITY VIOLATION: Sensitive file detected in git status: {line}")
             sys.exit(1)
     print("[HCE] PASSED: No biometric embeddings, database files, or binary models tracked in Git.")
@@ -45,7 +45,11 @@ def main():
     # 3. Model assets & integrity check
     run_command(f'"{python_bin}" diagnostics.py', "Model & System Diagnostics (diagnostics.py)")
 
-    # 4. Strict Biometric Security Check
+    # 4. Biometric gallery calibration evaluation
+    if (ROOT / "data" / "gallery.json").exists():
+        run_command(f'"{python_bin}" evaluate_gallery.py', "Biometric Gallery Calibration (evaluate_gallery.py)")
+
+    # 5. Strict Biometric Security Check
     check_git_hygiene()
 
     print("\n" + "=" * 65)

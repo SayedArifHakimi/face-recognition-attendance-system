@@ -78,14 +78,11 @@ python -m venv .venv
 # Download model weights (verified via manifest SHA-256)
 .\.venv\Scripts\python.exe setup_models.py
 
-# Run all test suites
-.\.venv\Scripts\python.exe test_face_id.py
-.\.venv\Scripts\python.exe test_attendance.py
-.\.venv\Scripts\python.exe test_admin_web.py
-.\.venv\Scripts\python.exe test_liveness.py
+# Run full HCE (Health Check Engineer) verification suite (25 tests + diagnostics + calibration)
+.\.venv\Scripts\python.exe hce_check.py
 
-# Run system health check
-.\.venv\Scripts\python.exe diagnostics.py
+# Run empirical biometric gallery calibration & LOOCV evaluation
+.\.venv\Scripts\python.exe evaluate_gallery.py --sweep
 
 # Launch interactive Kiosk & Face ID monitor
 .\.venv\Scripts\python.exe face_id.py

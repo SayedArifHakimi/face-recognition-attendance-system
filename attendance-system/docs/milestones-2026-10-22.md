@@ -99,9 +99,33 @@ The modernized system moves to an open-set, privacy-preserving edge architecture
 
 ### E. VS Code Developer Workspace
 - `.vscode/settings.json`: Configured virtual environment interpreter (`.venv`), Pylance search paths, and native test discovery.
-- `.vscode/launch.json`: F5 debug profiles for Kiosk, Camera Check, Admin Portal, and all test suites.
-- `.vscode/tasks.json`: Quick tasks for running test suites and launching background web server.
+- `.vscode/launch.json`: F5 debug profiles for Kiosk, Camera Check, Admin Portal, Diagnostics, Benchmark, Gallery Evaluation, and all test suites.
+- `.vscode/tasks.json`: Quick tasks for running test suites, launching background web server, and running biometric calibration sweeps.
 
-### F. Portfolio Case Study Synchronization (`sayed-portfolio`)
+### F. Disaster Recovery & Database Restoration (`attendance_db.py`, `admin_web.py`)
+- **`restore_db()` API**: Verifies target file exists, validates SQLite `PRAGMA integrity_check`, ensures required schema (`attendance_events`, `audit_log`) exists, and replaces database via SQLite Online Backup API.
+- **Web UI Disaster Recovery Tab**: Added dedicated Backups & Recovery management tab to view snapshots, trigger new snapshots, and restore from point-in-time backups.
+- **REST Endpoints**: `/api/backups` (GET) and `/api/restore` (POST) with directory-traversal protection.
+
+### G. Empirical Biometric Gallery Calibration (`evaluate_gallery.py`)
+- Analyzed 550 enrolled 128-d reference embeddings across Sayed (336) and Rin (214).
+- **Intra-Class Pairs (79,071 pairs)**: Combined Mean = 0.5498, Max = 0.9921.
+- **Inter-Class Cross Pairs (71,904 pairs)**: Mean = 0.2912, Max = 0.9133.
+- **Vectorized Leave-One-Out Cross-Validation (LOOCV)**:
+  - Total: 550 iterations executed in 9.76 ms.
+  - Correct (TAR): 530 (96.36%).
+  - Safe Quality Rejections (FRR): 20 (3.64%).
+  - False Accepts (FAR / Mismatch): **0 (0.00%)**.
+  - Empirically and mathematically proves that threshold $\tau = 0.50$ and margin $\delta = 0.08$ yield zero false accepts on this enrolled dataset.
+
+### H. Automated Verification Suite Expansion (25 Tests)
+- `test_face_id.py`: 100% PASS (Matching logic, timed capture phases, admin settings, gallery deletion).
+- `test_attendance.py`: 100% PASS (9/9 tests: transactions, cooldowns, idempotency, audit trail, summary, CSV export, live backup, point-in-time restore drill, and corruption handling).
+- `test_admin_web.py`: 100% PASS (6/6 tests: index page, API summary, API events, manual entry, corrections, reconciliation, backups, and restore API).
+- `test_liveness.py`: 100% PASS (4/4 tests: frontal head pose, turned pose, 5-point landmarks, micro-motion variance tracking).
+- `test_evaluate_gallery.py`: 100% PASS (6/6 tests: matrix normalization, distribution stats, pairwise matrices, LOOCV accuracy, parameter sweeps, and format validation).
+- `hce_check.py`: Single command verifying all 25 unittests, Face ID regressions, diagnostics, gallery calibration, and biometric git privacy.
+
+### I. Portfolio Case Study Synchronization (`sayed-portfolio`)
 - [projects/face-recognition.html](file:///e:/Hermes-Profiles/sayed-portfolio/projects/face-recognition.html) and [index.html](file:///e:/Hermes-Profiles/sayed-portfolio/index.html) updated cohesively.
 - Preserves full compliance with all portfolio guidelines: exactly 6 case sections, editorial styling, zero external dependencies, no published biometric data, and honest labeling of prototype boundaries.

@@ -400,3 +400,69 @@ def backup_db(backup_dir: Optional[Path] = None, db_path: Optional[Path] = None)
             dest_conn.close()
 
     return backup_file
+
+
+def list_backups(backup_dir: Optional[Path] = None, db_path: Optional[Path] = None) -> List[Dict[str, Any]]:
+    """List available database backups ordered by creation time descending."""
+    target_path = db_path if db_path is not None else DEFAULT_DB_PATH
+    target_dir = backup_dir if backup_dir is not None else target_path.parent / "backups"
+    if not target_dir.exists():
+        return []
+
+    backups = []
+    for file in sorted(target_dir.glob("attendance_backup_*.db"), reverse=True):
+        stat = file.stat()
+        backups.append({
+            "filename": file.name,
+            "path": str(file),
+            "size_bytes": stat.st_size,
+            "created_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).astimezone().isoformat(),
+        })
+    return backups
+
+
+def restore_db(backup_path: Path, db_path: Optional[Path] = None) -> Tuple[bool, str]:
+    """
+    Restore a database from a backup snapshot.
+    Performs integrity validation prior to restoration to ensure database safety.
+    Returns (success, message).
+    """
+    if not isinstance(backup_path, Path):
+        backup_path = Path(backup_path)
+
+    if not backup_path.exists() or not backup_path.is_file():
+        return False, f"Backup file not found or invalid: {backup_path}"
+
+    target_path = db_path if db_path is not None else DEFAULT_DB_PATH
+
+    # 1. Validate the backup file's SQLite integrity and required schema
+    check_conn = None
+    try:
+        check_conn = sqlite3.connect(str(backup_path))
+        cursor = check_conn.cursor()
+        integrity = cursor.execute("PRAGMA integrity_check;").fetchone()
+        if not integrity or integrity[0] != "ok":
+            return False, f"Backup integrity check failed: {integrity[0] if integrity else 'unknown error'}"
+        tables = [r[0] for r in cursor.execute("SELECT name FROM sqlite_master WHERE type='table';").fetchall()]
+        if "attendance_events" not in tables or "audit_log" not in tables:
+            return False, "Backup file missing required attendance tables ('attendance_events', 'audit_log')"
+    except Exception as e:
+        return False, f"Failed to validate backup file: {e}"
+    finally:
+        if check_conn is not None:
+            check_conn.close()
+
+    # 2. Perform online restore from backup_conn into dest_conn
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        src_conn = sqlite3.connect(str(backup_path))
+        dest_conn = sqlite3.connect(str(target_path))
+        try:
+            src_conn.backup(dest_conn)
+        finally:
+            dest_conn.close()
+            src_conn.close()
+        return True, f"Successfully restored database from {backup_path.name}"
+    except Exception as e:
+        return False, f"Restore failed: {e}"
+

@@ -23,6 +23,8 @@ from attendance_db import (
     get_audit_trail,
     export_csv,
     backup_db,
+    list_backups,
+    restore_db,
     DEFAULT_DB_PATH,
 )
 
@@ -314,6 +316,7 @@ HTML_TEMPLATE = """<!doctype html>
       <button class="tab" onclick="switchTab('gallery')">Enrolled Users</button>
       <button class="tab" onclick="switchTab('diagnostics')">Diagnostics &amp; Health</button>
       <button class="tab" onclick="switchTab('audit')">Audit Trail</button>
+      <button class="tab" onclick="switchTab('backups')">Backups &amp; Recovery</button>
     </div>
 
     <!-- Tab: Live Web Kiosk -->
@@ -498,6 +501,37 @@ HTML_TEMPLATE = """<!doctype html>
         </div>
       </div>
     </div>
+
+    <!-- Tab: Backups & Disaster Recovery -->
+    <div id="tabBackups" class="card" style="display: none;">
+      <div class="card-header">
+        <span class="card-title">Database Snapshots &amp; Disaster Recovery</span>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-sm btn-primary" onclick="triggerBackup()">+ Create New Backup</button>
+          <button class="btn btn-sm" onclick="fetchBackups()">Refresh</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 14px;">
+          Snapshots are point-in-time consistent SQLite database copies in <code>data/backups/</code>.
+        </p>
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Backup File</th>
+                <th>Created At</th>
+                <th>Size</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="backupsTableBody">
+              <tr><td colspan="4" class="empty-state">Loading backups...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Manual Entry Modal -->
@@ -603,10 +637,12 @@ HTML_TEMPLATE = """<!doctype html>
         reconciliation: 'tabReconciliation',
         gallery: 'tabGallery',
         diagnostics: 'tabDiagnostics',
-        audit: 'tabAudit'
+        audit: 'tabAudit',
+        backups: 'tabBackups'
       };
       Object.keys(tabMap).forEach(k => {
-        document.getElementById(tabMap[k]).style.display = k === tabId ? 'block' : 'none';
+        const el = document.getElementById(tabMap[k]);
+        if (el) el.style.display = k === tabId ? 'block' : 'none';
       });
       event.target.classList.add('active');
       if (tabId === 'reconciliation') fetchReconciliation();
@@ -614,6 +650,7 @@ HTML_TEMPLATE = """<!doctype html>
       if (tabId === 'audit') fetchAudit();
       if (tabId === 'diagnostics') fetchDiagnostics();
       if (tabId === 'events') fetchEvents();
+      if (tabId === 'backups') fetchBackups();
     }
 
     function toggleCameraStream() {
@@ -720,22 +757,78 @@ HTML_TEMPLATE = """<!doctype html>
     }
 
     async function triggerBackup() {
-      const btn = event.target;
-      btn.disabled = true;
-      btn.innerText = 'Backing up...';
+      const btn = (typeof event !== 'undefined' && event && event.target) ? event.target : null;
+      if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Backing up...';
+      }
       try {
         const res = await fetch('/api/backup', { method: 'POST' });
         const data = await res.json();
         if (res.ok && data.success) {
           alert('Backup snapshot created successfully: ' + data.backup_path);
+          fetchBackups();
         } else {
           alert('Backup failed: ' + (data.error || 'Unknown error'));
         }
       } catch (err) {
         alert('Network error during backup: ' + err);
       } finally {
-        btn.disabled = false;
-        btn.innerText = 'Backup Snapshot';
+        if (btn) {
+          btn.disabled = false;
+          btn.innerText = 'Backup Snapshot';
+        }
+      }
+    }
+
+    async function fetchBackups() {
+      const tbody = document.getElementById('backupsTableBody');
+      if (!tbody) return;
+      try {
+        const res = await fetch('/api/backups');
+        const backups = await res.json();
+        if (backups.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="4" class="empty-state">No backups found in data/backups/</td></tr>';
+          return;
+        }
+        tbody.innerHTML = backups.map(b => {
+          const sizeKb = (b.size_bytes / 1024).toFixed(1) + ' KB';
+          const timeFmt = b.created_at.replace('T', ' ').slice(0, 19);
+          return `<tr>
+            <td><code>${escapeHtml(b.filename)}</code></td>
+            <td>${timeFmt}</td>
+            <td>${sizeKb}</td>
+            <td>
+              <button class="btn btn-sm btn-danger" onclick="triggerRestore('${escapeHtml(b.filename)}')">Restore Snapshot</button>
+            </td>
+          </tr>`;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty-state">Failed to load backups</td></tr>';
+      }
+    }
+
+    async function triggerRestore(filename) {
+      if (!confirm(`CAUTION: Restoring snapshot '${filename}' will replace the current database with this point-in-time copy. Any unsaved changes since this backup will be overwritten. Proceed?`)) {
+        return;
+      }
+      try {
+        const res = await fetch('/api/restore', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename })
+        });
+        const data = await res.json();
+        if (res.ok && data.success) {
+          alert('Database restored successfully: ' + data.message);
+          fetchSummary();
+          fetchEvents();
+          fetchBackups();
+        } else {
+          alert('Restore failed: ' + (data.error || 'Unknown error'));
+        }
+      } catch (err) {
+        alert('Network error during restore: ' + err);
       }
     }
 
@@ -1157,6 +1250,11 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
             self.send_json(trails)
             return
 
+        if path == "/api/backups":
+            backups = list_backups()
+            self.send_json(backups)
+            return
+
         if path == "/export/csv":
             date_val = params.get("date", [None])[0] or None
             person_val = params.get("person", [None])[0] or None
@@ -1259,6 +1357,20 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
                 actor=actor,
                 reason=reason
             )
+            if ok:
+                self.send_json({"success": True, "message": msg})
+            else:
+                self.send_json({"success": False, "error": msg}, status=400)
+            return
+
+        if path == "/api/restore":
+            filename = payload.get("filename", "").strip()
+            if not filename:
+                self.send_json({"success": False, "error": "Backup filename required"}, status=400)
+                return
+            clean_name = Path(filename).name
+            backup_file = (DEFAULT_DB_PATH.parent / "backups" / clean_name).resolve()
+            ok, msg = restore_db(backup_file)
             if ok:
                 self.send_json({"success": True, "message": msg})
             else:
