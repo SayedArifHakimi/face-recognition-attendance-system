@@ -2,15 +2,24 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Run All Tests",
+      "label": "HCE Mandatory Verification",
       "type": "shell",
-      "command": ".\\.venv\\Scripts\\python.exe test_face_id.py; .\\.venv\\Scripts\\python.exe test_attendance.py; .\\.venv\\Scripts\\python.exe test_admin_web.py; .\\.venv\\Scripts\\python.exe test_liveness.py",
+      "command": ".\\.venv\\Scripts\\python.exe hce_check.py",
       "options": {
         "cwd": "${workspaceFolder}/attendance-system"
       },
       "group": {
         "kind": "test",
         "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Run All Tests",
+      "type": "shell",
+      "command": ".\\.venv\\Scripts\\python.exe -m unittest discover -v -p \"test_*.py\"; .\\.venv\\Scripts\\python.exe test_face_id.py",
+      "options": {
+        "cwd": "${workspaceFolder}/attendance-system"
       },
       "problemMatcher": []
     },

@@ -2,6 +2,14 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "HCE: Mandatory Verification Suite",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/hce_check.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
       "name": "Face ID: Live Monitor & Kiosk",
       "type": "debugpy",
       "request": "launch",
