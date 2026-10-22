@@ -17,7 +17,7 @@
    - All enrollment data belongs strictly in the local `data/` directory, which is excluded from version control.
 
 3. **Mandatory Test Verification:**
-   - All 16 automated tests must pass with 0 failures before any task is complete:
+   - All automated unit, evaluation, and kiosk tests must pass with 0 failures before any task is complete:
      ```powershell
      cd attendance-system
      & .\.venv\Scripts\python.exe -m unittest discover -v -p "test_*.py"
@@ -26,3 +26,16 @@
 
 4. **Model Assets Integrity:**
    - Keep ONNX model assets (`sface.onnx` and `yunet.onnx`) verified against `manifest.json`. Do not modify or replace model binaries without updating checksums and licenses.
+
+---
+
+## 5. GitHub Cloud Storage & Remote Policy
+
+- **Official Remote:** `https://github.com/SayedArifHakimi/face-recognition-attendance-system.git`
+- **Visibility:** Public
+- **Strict Sync Exclusions:**
+  - `data/gallery.json` (biometric vectors)
+  - `data/*.db` (local SQLite transaction store)
+  - `.venv/` (Python virtual environment)
+  - `tmp/` and `__pycache__/`
+- **Push Policy:** Only clean, tested kiosk and engine code may be pushed to `origin/main`.
