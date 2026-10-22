@@ -1,0 +1,31 @@
+# Python environment
+.venv/
+venv/
+ENV/
+env/
+
+# Byte-compiled / optimized files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Local biometric embeddings & database (sensitive / private data)
+**/data/
+data/
+*.db
+*.db-*
+gallery.json
+data/settings.json
+**/data/settings.json
+backups/
+**/backups/
+
+# Pretrained large binary ONNX models (downloaded via setup_models.py)
+models/*.onnx
+**/models/*.onnx
+
+# Temporary files & local scratch
+tmp/
+*.tmp
+.user_uploaded/
+scratch/

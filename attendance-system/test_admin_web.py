@@ -1,0 +1,136 @@
+"""Unit tests for the admin web portal HTTP endpoints."""
+import json
+import tempfile
+import threading
+import time
+import urllib.request
+import unittest
+from http.server import HTTPServer
+from pathlib import Path
+from unittest.mock import patch
+
+from attendance_db import init_db, record_event
+from admin_web import AttendanceHTTPHandler
+
+
+class TestAdminWeb(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.temp_dir = tempfile.TemporaryDirectory()
+        cls.db_path = Path(cls.temp_dir.name) / "test_admin.db"
+        init_db(cls.db_path)
+
+        # Prepopulate sample records
+        record_event("Sayed", "CHECK_IN", similarity_score=0.92, db_path=cls.db_path)
+        record_event("Alice", "CHECK_IN", similarity_score=0.88, db_path=cls.db_path)
+
+        # Patch DEFAULT_DB_PATH in admin_web and attendance_db
+        cls.patcher = patch("admin_web.DEFAULT_DB_PATH", cls.db_path)
+        cls.patcher_db = patch("attendance_db.DEFAULT_DB_PATH", cls.db_path)
+        cls.patcher.start()
+        cls.patcher_db.start()
+
+        # Start background HTTP server on port 0 (OS picks free port)
+        cls.server = HTTPServer(("127.0.0.1", 0), AttendanceHTTPHandler)
+        cls.port = cls.server.server_port
+        cls.base_url = f"http://127.0.0.1:{cls.port}"
+        cls.server_thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.server_thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.server.server_close()
+        cls.patcher.stop()
+        cls.patcher_db.stop()
+        cls.temp_dir.cleanup()
+
+    def test_get_index(self):
+        req = urllib.request.urlopen(f"{self.base_url}/")
+        self.assertEqual(req.status, 200)
+        content = req.read().decode("utf-8")
+        self.assertIn("Face Attendance", content)
+
+    def test_get_events_and_summary(self):
+        req = urllib.request.urlopen(f"{self.base_url}/api/events")
+        self.assertEqual(req.status, 200)
+        events = json.loads(req.read().decode("utf-8"))
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["person_name"], "Alice")
+
+        req_sum = urllib.request.urlopen(f"{self.base_url}/api/summary")
+        summary = json.loads(req_sum.read().decode("utf-8"))
+        self.assertEqual(summary["total_check_ins"], 2)
+        self.assertEqual(summary["unique_people"], 2)
+
+    def test_manual_entry_and_audit(self):
+        payload = json.dumps({
+            "person_name": "Bob",
+            "event_type": "CHECK_IN",
+            "actor": "LeadAdmin",
+            "reason": "Forgot camera check"
+        }).encode("utf-8")
+        req = urllib.request.Request(
+            f"{self.base_url}/api/manual",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data["success"])
+            event_id = data["event"]["id"]
+
+        # Now test correction endpoint
+        correct_payload = json.dumps({
+            "event_id": event_id,
+            "new_status": "VOID",
+            "actor": "LeadAdmin",
+            "reason": "Duplicate entry"
+        }).encode("utf-8")
+        correct_req = urllib.request.Request(
+            f"{self.base_url}/api/correct",
+            data=correct_payload,
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(correct_req) as resp:
+            self.assertEqual(resp.status, 200)
+            cdata = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(cdata["success"])
+
+        # Check audit trail endpoint
+        audit_req = urllib.request.urlopen(f"{self.base_url}/api/audit")
+        audit_logs = json.loads(audit_req.read().decode("utf-8"))
+        self.assertTrue(any(a["action"] == "VOIDED" and a["actor"] == "LeadAdmin" for a in audit_logs))
+
+    def test_csv_export(self):
+        req = urllib.request.urlopen(f"{self.base_url}/export/csv")
+        self.assertEqual(req.status, 200)
+        self.assertEqual(req.headers.get("Content-Type"), "text/csv; charset=utf-8")
+        content = req.read().decode("utf-8")
+        self.assertTrue(content.startswith("Record ID,Event ID"))
+        self.assertIn("Sayed", content)
+
+    def test_reconciliation_and_backup(self):
+        req = urllib.request.urlopen(f"{self.base_url}/api/reconciliation")
+        self.assertEqual(req.status, 200)
+        reconcile = json.loads(req.read().decode("utf-8"))
+        self.assertGreaterEqual(len(reconcile), 2)
+
+        backup_req = urllib.request.Request(
+            f"{self.base_url}/api/backup",
+            data=b"{}",
+            headers={"Content-Type": "application/json"},
+            method="POST"
+        )
+        with urllib.request.urlopen(backup_req) as resp:
+            self.assertEqual(resp.status, 200)
+            data = json.loads(resp.read().decode("utf-8"))
+            self.assertTrue(data["success"])
+            self.assertTrue(data["backup_path"].startswith("attendance_backup_"))
+
+
+if __name__ == "__main__":
+    unittest.main()

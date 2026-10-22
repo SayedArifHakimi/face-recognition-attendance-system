@@ -1,0 +1,78 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Face ID: Live Monitor & Kiosk",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/face_id.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Face ID: Check Camera Only",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/face_id.py",
+      "args": ["--check-camera"],
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Attendance: Admin Web Portal (Port 8080)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/admin_web.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Diagnostics: System Health Check",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/diagnostics.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Benchmark: Latency & Scale",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/benchmark.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Tests: Run Face ID Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/test_face_id.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Tests: Run Attendance DB Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/test_attendance.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Tests: Run Admin Web Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/test_admin_web.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    },
+    {
+      "name": "Tests: Run Liveness Tests",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/attendance-system/test_liveness.py",
+      "cwd": "${workspaceFolder}/attendance-system",
+      "console": "integratedTerminal"
+    }
+  ]
+}
