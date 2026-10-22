@@ -1,4 +1,4 @@
-"""Lightweight, zero-dependency admin web interface for attendance records, live kiosk, and audit logs."""
+"""Dual-interface web portal: User Attendance Kiosk and Admin Management Console."""
 import argparse
 import html
 import json
@@ -7,7 +7,7 @@ import sqlite3
 import sys
 import time
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -52,12 +52,377 @@ def read_enrolled_gallery() -> Dict[str, int]:
     return {}
 
 
-HTML_TEMPLATE = """<!doctype html>
+# ==============================================================================
+# 1. USER ATTENDANCE KIOSK HTML TEMPLATE (Public / Employee View)
+# ==============================================================================
+USER_PAGE_HTML = """<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Face Attendance System — Localhost Portal</title>
+  <title>Face Attendance — Employee Kiosk</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --primary: #0f172a;
+      --accent: #2563eb;
+      --border: #e2e8f0;
+      --success-bg: #ecfdf5;
+      --success-text: #065f46;
+      --warning-bg: #fffbeb;
+      --warning-text: #92400e;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+      padding: 24px 16px;
+    }
+    .container { max-width: 1080px; margin: 0 auto; }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .brand h1 { font-size: 1.5rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }
+    .brand p { font-size: 0.875rem; color: var(--text-muted); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text);
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.15s ease;
+    }
+    .btn:hover { background: #f1f5f9; }
+    .btn-primary { background: var(--primary); color: #ffffff; border-color: var(--primary); }
+    .btn-primary:hover { background: #334155; }
+    .btn-success { background: #16a34a; color: #ffffff; border-color: #16a34a; font-size: 1.1rem; padding: 12px 20px; }
+    .btn-success:hover { background: #15803d; }
+    .btn-out { background: #2563eb; color: #ffffff; border-color: #2563eb; font-size: 1.1rem; padding: 12px 20px; }
+    .btn-out:hover { background: #1d4ed8; }
+    .btn-sm { padding: 5px 10px; font-size: 0.8rem; }
+    .btn-danger { color: #dc2626; border-color: #fecaca; }
+    
+    .kiosk-grid {
+      display: grid;
+      grid-template-columns: 1.4fr 1fr;
+      gap: 20px;
+      margin-bottom: 24px;
+    }
+    @media (max-width: 820px) {
+      .kiosk-grid { grid-template-columns: 1fr; }
+    }
+    .card {
+      background: var(--card-bg);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .card-header {
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #fafafa;
+    }
+    .card-title { font-size: 1rem; font-weight: 600; }
+    .card-body { padding: 18px; }
+
+    .video-viewport {
+      background: #0f172a;
+      border-radius: 8px;
+      aspect-ratio: 4 / 3;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+    .video-viewport img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .alert-banner {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-weight: 600;
+      margin-bottom: 16px;
+    }
+    .alert-success { background: var(--success-bg); color: var(--success-text); border: 1px solid #a7f3d0; }
+    .alert-warning { background: var(--warning-bg); color: var(--warning-text); border: 1px solid #fde68a; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
+    th { text-align: left; padding: 10px 12px; background: #f8fafc; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+    td { padding: 12px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-in { background: #dcfce7; color: #15803d; }
+    .badge-out { background: #dbeafe; color: #1e40af; }
+    .empty-state { text-align: center; color: var(--text-muted); padding: 24px; font-size: 0.875rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <h1>
+          <img src="/favicon.svg" alt="Icon" width="26" height="26">
+          Face Attendance Kiosk
+        </h1>
+        <p>Live Facial Verification &amp; Self-Service Attendance</p>
+      </div>
+      <div>
+        <a href="/admin" class="btn">🔒 Admin Portal</a>
+      </div>
+    </header>
+
+    <div id="kioskAlert" style="display: none;" class="alert-banner alert-success"></div>
+
+    <div class="kiosk-grid">
+      <!-- Camera Preview Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Live Camera Stream</span>
+          <button class="btn btn-sm" id="btnToggleCam" onclick="toggleCameraStream()">Start Camera Stream</button>
+        </div>
+        <div class="card-body">
+          <div class="video-viewport">
+            <div id="camPlaceholder" style="color: #94a3b8; text-align: center; padding: 20px;">
+              <p style="font-weight: 600; margin-bottom: 6px;">Camera stream is currently paused</p>
+              <p style="font-size: 0.8rem;">Click <strong>Start Camera Stream</strong> to verify identity and record attendance.</p>
+            </div>
+            <img id="camStream" style="display: none;" alt="Live Kiosk Stream">
+          </div>
+        </div>
+      </div>
+
+      <!-- Action Card -->
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Attendance Action</span>
+        </div>
+        <div class="card-body" style="display: flex; flex-direction: column; gap: 16px;">
+          <div style="background: #f8fafc; border: 1px solid var(--border); padding: 16px; border-radius: 8px;">
+            <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 600;">Verified Identity</div>
+            <div style="font-size: 1.5rem; font-weight: 700; color: var(--primary); margin: 4px 0;" id="detectedName">Waiting for camera...</div>
+            <div style="font-size: 0.85rem; color: var(--text-muted);" id="detectedScore">Score: -</div>
+          </div>
+
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <button class="btn btn-success" id="btnWebClockIn" onclick="webClock('CHECK_IN')" disabled>
+              ✓ Clock In (Press I)
+            </button>
+            <button class="btn btn-out" id="btnWebClockOut" onclick="webClock('CHECK_OUT')" disabled>
+              → Clock Out (Press O)
+            </button>
+          </div>
+
+          <p style="font-size: 0.75rem; color: var(--text-muted); text-align: center;">
+            Notice: 60-second anti-duplicate cooldown is enforced.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Today's Activity Card -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Today's Verified Activity</span>
+        <button class="btn btn-sm" onclick="fetchTodayActivity()">Refresh</button>
+      </div>
+      <div class="card-body">
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Person Name</th>
+                <th>Event Type</th>
+                <th>Device</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="todayTableBody">
+              <tr><td colspan="5" class="empty-state">Loading today's activity...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let streamActive = false;
+    let pollInterval = null;
+    let activeDetectedPerson = null;
+    let activeDetectedScore = null;
+
+    function toggleCameraStream() {
+      const img = document.getElementById('camStream');
+      const placeholder = document.getElementById('camPlaceholder');
+      const btn = document.getElementById('btnToggleCam');
+      if (!streamActive) {
+        streamActive = true;
+        img.src = '/stream?' + Date.now();
+        img.style.display = 'block';
+        placeholder.style.display = 'none';
+        btn.innerText = 'Stop Camera Stream';
+        btn.className = 'btn btn-sm btn-danger';
+        pollActiveFace();
+        pollInterval = setInterval(pollActiveFace, 500);
+      } else {
+        streamActive = false;
+        img.src = '';
+        img.style.display = 'none';
+        placeholder.style.display = 'block';
+        btn.innerText = 'Start Camera Stream';
+        btn.className = 'btn btn-sm';
+        clearInterval(pollInterval);
+        document.getElementById('detectedName').innerText = 'Camera stopped';
+        document.getElementById('detectedScore').innerText = 'Score: -';
+        document.getElementById('btnWebClockIn').disabled = true;
+        document.getElementById('btnWebClockOut').disabled = true;
+      }
+    }
+
+    async function pollActiveFace() {
+      if (!streamActive) return;
+      try {
+        const res = await fetch('/api/active_face');
+        if (res.ok) {
+          const data = await res.json();
+          const nameEl = document.getElementById('detectedName');
+          const scoreEl = document.getElementById('detectedScore');
+          const btnIn = document.getElementById('btnWebClockIn');
+          const btnOut = document.getElementById('btnWebClockOut');
+
+          if (data.person && data.person !== 'Unknown') {
+            activeDetectedPerson = data.person;
+            activeDetectedScore = data.score;
+            nameEl.innerText = data.person;
+            scoreEl.innerText = `Cosine Score: ${data.score.toFixed(3)}`;
+            btnIn.disabled = false;
+            btnOut.disabled = false;
+            btnIn.innerText = `✓ Clock In: ${data.person} (I)`;
+            btnOut.innerText = `→ Clock Out: ${data.person} (O)`;
+          } else {
+            activeDetectedPerson = null;
+            nameEl.innerText = data.person || 'Waiting for face...';
+            scoreEl.innerText = data.score ? `Score: ${data.score.toFixed(3)}` : 'Score: -';
+            btnIn.disabled = true;
+            btnOut.disabled = true;
+            btnIn.innerText = '✓ Clock In (Press I)';
+            btnOut.innerText = '→ Clock Out (Press O)';
+          }
+        }
+      } catch (e) {}
+    }
+
+    async function webClock(eventType) {
+      if (!activeDetectedPerson) return;
+      const res = await fetch('/api/clock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ person_name: activeDetectedPerson, event_type: eventType, similarity: activeDetectedScore })
+      });
+      const data = await res.json();
+      const banner = document.getElementById('kioskAlert');
+      banner.style.display = 'block';
+      if (res.ok && data.success) {
+        banner.className = 'alert-banner alert-success';
+        banner.innerText = `✓ Successfully recorded ${eventType.replace('_', ' ')} for ${activeDetectedPerson}`;
+        fetchTodayActivity();
+      } else {
+        banner.className = 'alert-banner alert-warning';
+        banner.innerText = `! ${data.error || 'Failed to record'}`;
+      }
+      setTimeout(() => { banner.style.display = 'none'; }, 4000);
+    }
+
+    async function fetchTodayActivity() {
+      const today = new Date().toISOString().slice(0, 10);
+      const res = await fetch(`/api/events?date=${today}&limit=20`);
+      const tbody = document.getElementById('todayTableBody');
+      if (!res.ok) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">Failed to load activity</td></tr>';
+        return;
+      }
+      const events = await res.json();
+      if (events.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No attendance recorded today yet</td></tr>';
+        return;
+      }
+      tbody.innerHTML = events.slice(0, 10).map(evt => {
+        const timeFmt = evt.event_time.replace('T', ' ').slice(11, 19);
+        const badgeClass = evt.event_type === 'CHECK_IN' ? 'badge-in' : 'badge-out';
+        return `<tr>
+          <td><strong>${timeFmt}</strong></td>
+          <td>${escapeHtml(evt.person_name)}</td>
+          <td><span class="badge ${badgeClass}">${evt.event_type.replace('_', ' ')}</span></td>
+          <td><small>${escapeHtml(evt.device_id)}</small></td>
+          <td><span class="badge" style="background:#f1f5f9; color:#475569;">${evt.status}</span></td>
+        </tr>`;
+      }).join('');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    window.addEventListener('keydown', (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+      if (e.key === 'i' || e.key === 'I') webClock('CHECK_IN');
+      if (e.key === 'o' || e.key === 'O') webClock('CHECK_OUT');
+    });
+
+    window.addEventListener('DOMContentLoaded', () => {
+      fetchTodayActivity();
+    });
+  </script>
+</body>
+</html>
+"""
+
+
+# ==============================================================================
+# 2. ADMIN CONSOLE HTML TEMPLATE (Administrative / HR View)
+# ==============================================================================
+ADMIN_PAGE_HTML = """<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Face Attendance — Admin Management Console</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="alternate icon" type="image/x-icon" href="/favicon.ico">
   <style>
@@ -99,7 +464,7 @@ HTML_TEMPLATE = """<!doctype html>
       padding-bottom: 16px;
       border-bottom: 1px solid var(--border);
     }
-    .brand h1 { font-size: 1.5rem; font-weight: 700; color: var(--primary); }
+    .brand h1 { font-size: 1.5rem; font-weight: 700; color: var(--primary); display: flex; align-items: center; gap: 8px; }
     .brand p { font-size: 0.875rem; color: var(--text-muted); }
     .header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
     .btn {
@@ -120,8 +485,6 @@ HTML_TEMPLATE = """<!doctype html>
     .btn:hover { background: #f1f5f9; }
     .btn-primary { background: var(--primary); color: #ffffff; border-color: var(--primary); }
     .btn-primary:hover { background: var(--primary-hover); }
-    .btn-success { background: #16a34a; color: #ffffff; border-color: #16a34a; }
-    .btn-success:hover { background: #15803d; }
     .btn-sm { padding: 4px 8px; font-size: 0.75rem; }
     .btn-danger { color: #dc2626; border-color: #fecaca; }
     .btn-danger:hover { background: var(--danger-bg); }
@@ -140,6 +503,27 @@ HTML_TEMPLATE = """<!doctype html>
     }
     .stat-card .label { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
     .stat-card .value { font-size: 1.75rem; font-weight: 700; color: var(--primary); margin-top: 4px; }
+    
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .tab {
+      padding: 10px 16px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      border: none;
+      background: none;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+    }
+    .tab:hover { color: var(--primary); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
     
     .card {
       background: var(--card-bg);
@@ -186,74 +570,29 @@ HTML_TEMPLATE = """<!doctype html>
     
     .badge {
       display: inline-block;
-      padding: 2px 8px;
+      padding: 3px 8px;
+      border-radius: 9999px;
       font-size: 0.75rem;
       font-weight: 600;
-      border-radius: 9999px;
     }
-    .badge-in { background: var(--success-bg); color: var(--success-text); }
-    .badge-out { background: var(--info-bg); color: var(--info-text); }
-    .badge-void { background: var(--danger-bg); color: var(--danger-text); text-decoration: line-through; }
-    .badge-corrected { background: var(--warning-bg); color: var(--warning-text); }
-    .badge-manual { background: #f1f5f9; color: #475569; font-size: 0.7rem; border: 1px solid #cbd5e1; }
-    .badge-completed { background: var(--success-bg); color: var(--success-text); }
-    .badge-missing { background: var(--warning-bg); color: var(--warning-text); }
-    
-    .tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
-    .tab {
-      padding: 8px 16px;
-      cursor: pointer;
-      font-size: 0.875rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      border-bottom: 2px solid transparent;
-      background: none;
-      border-top: none;
-      border-left: none;
-      border-right: none;
-    }
-    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
-    
-    .kiosk-grid {
-      display: grid;
-      grid-template-columns: 1fr;
-      gap: 20px;
-      align-items: start;
-    }
-    @media (min-width: 840px) {
-      .kiosk-grid { grid-template-columns: 640px 1fr; }
-    }
-    .video-viewport {
-      width: 100%;
-      height: 480px;
-      background: #0f172a;
-      border-radius: var(--radius);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      overflow: hidden;
-      position: relative;
-    }
-    .video-viewport img { width: 100%; height: 100%; object-fit: contain; }
-    .kiosk-control-card {
-      background: #ffffff;
-      border: 1px solid var(--border);
-      border-radius: var(--radius);
-      padding: 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 16px;
-    }
+    .badge-in { background: #dcfce7; color: #15803d; }
+    .badge-out { background: #dbeafe; color: #1e40af; }
+    .badge-recorded { background: #f1f5f9; color: #475569; }
+    .badge-corrected { background: #fef3c7; color: #b45309; }
+    .badge-void { background: #fee2e2; color: #b91c1c; }
+    .badge-manual { background: #ede9fe; color: #6d28d9; }
+    .badge-completed { background: #dcfce7; color: #15803d; }
+    .badge-missing { background: #fef3c7; color: #b45309; }
 
     .modal-overlay {
-      display: none;
       position: fixed;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(15, 23, 42, 0.5);
-      z-index: 100;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.4);
+      backdrop-filter: blur(2px);
+      display: none;
       align-items: center;
       justify-content: center;
-      padding: 16px;
+      z-index: 1000;
     }
     .modal-overlay.open { display: flex; }
     .modal {
@@ -261,29 +600,51 @@ HTML_TEMPLATE = """<!doctype html>
       border-radius: var(--radius);
       width: 100%;
       max-width: 480px;
-      box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
       overflow: hidden;
     }
-    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+    .modal-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
     .modal-body { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-    .modal-footer { padding: 14px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; background: #fafafa; }
-    
+    .modal-footer {
+      padding: 14px 20px;
+      background: #f8fafc;
+      border-top: 1px solid var(--border);
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+    }
     .pill-list { display: flex; flex-wrap: wrap; gap: 8px; }
-    .pill { background: #f1f5f9; border: 1px solid var(--border); padding: 4px 10px; border-radius: 14px; font-size: 0.8rem; }
-    .empty-state { text-align: center; padding: 32px 16px; color: var(--text-muted); }
-    .alert-banner { padding: 10px 14px; border-radius: 6px; font-size: 0.875rem; margin-bottom: 12px; }
-    .alert-success { background: var(--success-bg); color: var(--success-text); }
-    .alert-warning { background: var(--warning-bg); color: var(--warning-text); }
+    .pill {
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      padding: 6px 12px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .empty-state { text-align: center; color: var(--text-muted); padding: 32px; font-size: 0.875rem; }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <div class="brand">
-        <h1>Face Attendance Kiosk &amp; Admin Portal</h1>
-        <p>UiTM Shah Alam FYP Rebuild · Edge Face Recognition &amp; Transactional Logging</p>
+        <h1>
+          <img src="/favicon.svg" alt="Icon" width="26" height="26">
+          Attendance Admin Portal
+        </h1>
+        <p>Operations, Audit Logs, Biometrics &amp; Data Retention</p>
       </div>
       <div class="header-actions">
+        <a href="/" class="btn">↗ Open Kiosk View</a>
         <button class="btn" onclick="triggerBackup()">Backup Snapshot</button>
         <button class="btn" onclick="openManualModal()">+ Manual Entry</button>
         <button class="btn btn-primary" onclick="downloadCsv()">Export CSV</button>
@@ -316,59 +677,16 @@ HTML_TEMPLATE = """<!doctype html>
 
     <!-- Navigation Tabs -->
     <div class="tabs">
-      <button class="tab active" onclick="switchTab('kiosk')">Live Web Kiosk</button>
-      <button class="tab" onclick="switchTab('events')">Attendance Records</button>
+      <button class="tab active" onclick="switchTab('events')">Attendance Records</button>
       <button class="tab" onclick="switchTab('reconciliation')">Daily Reconciliation</button>
       <button class="tab" onclick="switchTab('gallery')">Enrolled Users</button>
+      <button class="tab" onclick="switchTab('backups')">Backups &amp; Data Retention</button>
       <button class="tab" onclick="switchTab('diagnostics')">Diagnostics &amp; Health</button>
-      <button class="tab" onclick="switchTab('audit')">Audit Trail</button>
-      <button class="tab" onclick="switchTab('backups')">Backups &amp; Retention</button>
-    </div>
-
-    <!-- Tab: Live Web Kiosk -->
-    <div id="tabKiosk" class="card">
-      <div class="card-header">
-        <span class="card-title">Live Kiosk Camera Preview &amp; Clocking</span>
-        <button class="btn btn-sm" id="btnToggleCam" onclick="toggleCameraStream()">Start Camera Stream</button>
-      </div>
-      <div class="card-body">
-        <div id="kioskAlert" style="display: none;" class="alert-banner alert-success"></div>
-        <div class="kiosk-grid">
-          <div class="video-viewport">
-            <div id="camPlaceholder" style="color: #94a3b8; text-align: center; padding: 20px;">
-              <p style="font-weight: 600; margin-bottom: 6px;">Camera stream is currently paused</p>
-              <p style="font-size: 0.8rem;">Click <strong>Start Camera Stream</strong> to view live detection, or run <code>face_id.py</code> for the desktop kiosk window.</p>
-            </div>
-            <img id="camStream" style="display: none;" alt="Live Kiosk Stream">
-          </div>
-          <div class="kiosk-control-card">
-            <h3>Attendance Action</h3>
-            <p style="font-size: 0.875rem; color: var(--text-muted);">
-              Identifies face using 128-d cosine embeddings with quality gating and unknown rejection.
-            </p>
-            <div style="background: #f8fafc; border: 1px solid var(--border); padding: 12px; border-radius: 6px;">
-              <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase;">Detected Identity</div>
-              <div style="font-size: 1.25rem; font-weight: 700; color: var(--primary);" id="detectedName">Waiting for camera...</div>
-              <div style="font-size: 0.8rem; color: var(--text-muted);" id="detectedScore">Score: -</div>
-            </div>
-            <div style="display: flex; flex-direction: column; gap: 8px;">
-              <button class="btn btn-success" id="btnWebClockIn" onclick="webClock('CHECK_IN')" disabled>
-                Clock In (I)
-              </button>
-              <button class="btn btn-primary" id="btnWebClockOut" onclick="webClock('CHECK_OUT')" disabled>
-                Clock Out (O)
-              </button>
-            </div>
-            <p style="font-size: 0.75rem; color: var(--text-muted);">
-              Notice: 60-second cooldown is enforced to prevent double-clocking.
-            </p>
-          </div>
-        </div>
-      </div>
+      <button class="tab" onclick="switchTab('audit')">Tamper Audit Trail</button>
     </div>
 
     <!-- Tab: Attendance Events -->
-    <div id="tabEvents" class="card" style="display: none;">
+    <div id="tabEvents" class="card">
       <div class="card-header">
         <span class="card-title">Attendance Logs</span>
         <button class="btn btn-sm" onclick="fetchEvents()">Refresh</button>
@@ -427,22 +745,22 @@ HTML_TEMPLATE = """<!doctype html>
     <!-- Tab: Daily Reconciliation -->
     <div id="tabReconciliation" class="card" style="display: none;">
       <div class="card-header">
-        <span class="card-title">Daily Attendance Reconciliation &amp; Missing Actions</span>
+        <span class="card-title">Daily Attendance Reconciliation</span>
         <button class="btn btn-sm" onclick="fetchReconciliation()">Refresh</button>
       </div>
       <div class="card-body">
         <p style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 14px;">
-          Summary per individual for the selected date. Automatically highlights anyone who checked in without a corresponding check-out.
+          Compares first check-in and last check-out timestamps per person. Flags individuals with missing check-outs.
         </p>
         <div style="overflow-x: auto;">
           <table>
             <thead>
               <tr>
-                <th>Person</th>
+                <th>Person Name</th>
                 <th>First In</th>
                 <th>Last Out</th>
-                <th>Ins</th>
-                <th>Outs</th>
+                <th>In Count</th>
+                <th>Out Count</th>
                 <th>Status</th>
               </tr>
             </thead>
@@ -602,37 +920,6 @@ HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
 
-  <!-- Delete Person Modal -->
-  <div class="modal-overlay" id="deletePersonModal">
-    <div class="modal">
-      <div class="modal-header">
-        <h3 style="color: #dc2626;">Remove Enrolled Person</h3>
-        <button class="btn btn-sm" onclick="closeModal('deletePersonModal')">✕</button>
-      </div>
-      <div class="modal-body">
-        <div style="background: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 6px; margin-bottom: 14px; font-size: 0.85rem; color: #991b1b;">
-          ⚠️ <strong>Caution:</strong> Deleting an enrolled person removes all their facial reference embeddings from the active recognition gallery. An automatic point-in-time backup of <code>gallery.json</code> will be saved to <code>data/gallery_backups/</code>.
-        </div>
-        <div class="form-group">
-          <label>Target Identity</label>
-          <div id="deletePersonDesc" style="font-weight: 700; font-size: 1.1rem; color: var(--primary);">-</div>
-        </div>
-        <div class="form-group">
-          <label for="deletePersonActor">Admin Name</label>
-          <input type="text" id="deletePersonActor" class="form-control" value="Admin">
-        </div>
-        <div class="form-group">
-          <label for="deletePersonReason">Reason for Deletion (Required)</label>
-          <input type="text" id="deletePersonReason" class="form-control" placeholder="e.g. Employee offboarding / departure">
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn" onclick="closeModal('deletePersonModal')">Cancel</button>
-        <button class="btn btn-danger" onclick="submitDeletePerson()">Confirm Permanent Deletion</button>
-      </div>
-    </div>
-  </div>
-
   <!-- Manual Entry Modal -->
   <div class="modal-overlay" id="manualModal">
     <div class="modal">
@@ -716,10 +1003,39 @@ HTML_TEMPLATE = """<!doctype html>
     </div>
   </div>
 
+  <!-- Delete Person Modal -->
+  <div class="modal-overlay" id="deletePersonModal">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 style="color: #dc2626;">Remove Enrolled Person</h3>
+        <button class="btn btn-sm" onclick="closeModal('deletePersonModal')">✕</button>
+      </div>
+      <div class="modal-body">
+        <div style="background: #fef2f2; border: 1px solid #fecaca; padding: 12px; border-radius: 6px; margin-bottom: 14px; font-size: 0.85rem; color: #991b1b;">
+          ⚠️ <strong>Caution:</strong> Deleting an enrolled person removes all their facial reference embeddings from the active recognition gallery. An automatic point-in-time backup of <code>gallery.json</code> will be saved to <code>data/gallery_backups/</code>.
+        </div>
+        <div class="form-group">
+          <label>Target Identity</label>
+          <div id="deletePersonDesc" style="font-weight: 700; font-size: 1.1rem; color: var(--primary);">-</div>
+        </div>
+        <div class="form-group">
+          <label for="deletePersonActor">Admin Name</label>
+          <input type="text" id="deletePersonActor" class="form-control" value="Admin">
+        </div>
+        <div class="form-group">
+          <label for="deletePersonReason">Reason for Deletion (Required)</label>
+          <input type="text" id="deletePersonReason" class="form-control" placeholder="e.g. Employee offboarding / departure">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal('deletePersonModal')">Cancel</button>
+        <button class="btn btn-danger" onclick="submitDeletePerson()">Confirm Permanent Deletion</button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let debounceTimer;
-    let streamActive = false;
-    let pollInterval = null;
 
     function debounce(func, delay) {
       return (...args) => {
@@ -731,7 +1047,6 @@ HTML_TEMPLATE = """<!doctype html>
     function switchTab(tabId) {
       document.querySelectorAll('.tabs .tab').forEach(t => t.classList.remove('active'));
       const tabMap = {
-        kiosk: 'tabKiosk',
         events: 'tabEvents',
         reconciliation: 'tabReconciliation',
         gallery: 'tabGallery',
@@ -750,91 +1065,6 @@ HTML_TEMPLATE = """<!doctype html>
       if (tabId === 'diagnostics') fetchDiagnostics();
       if (tabId === 'events') fetchEvents();
       if (tabId === 'backups') { fetchBackups(); fetchMaintenance(); }
-    }
-
-    function toggleCameraStream() {
-      const img = document.getElementById('camStream');
-      const placeholder = document.getElementById('camPlaceholder');
-      const btn = document.getElementById('btnToggleCam');
-      if (!streamActive) {
-        streamActive = true;
-        img.src = '/stream?' + Date.now();
-        img.style.display = 'block';
-        placeholder.style.display = 'none';
-        btn.innerText = 'Stop Camera Stream';
-        btn.className = 'btn btn-sm btn-danger';
-        pollActiveFace();
-        pollInterval = setInterval(pollActiveFace, 500);
-      } else {
-        streamActive = false;
-        img.src = '';
-        img.style.display = 'none';
-        placeholder.style.display = 'block';
-        btn.innerText = 'Start Camera Stream';
-        btn.className = 'btn btn-sm';
-        clearInterval(pollInterval);
-        document.getElementById('detectedName').innerText = 'Camera stopped';
-        document.getElementById('detectedScore').innerText = 'Score: -';
-        document.getElementById('btnWebClockIn').disabled = true;
-        document.getElementById('btnWebClockOut').disabled = true;
-      }
-    }
-
-    let activeDetectedPerson = null;
-    let activeDetectedScore = null;
-
-    async function pollActiveFace() {
-      if (!streamActive) return;
-      try {
-        const res = await fetch('/api/active_face');
-        if (res.ok) {
-          const data = await res.json();
-          const nameEl = document.getElementById('detectedName');
-          const scoreEl = document.getElementById('detectedScore');
-          const btnIn = document.getElementById('btnWebClockIn');
-          const btnOut = document.getElementById('btnWebClockOut');
-
-          if (data.person && data.person !== 'Unknown') {
-            activeDetectedPerson = data.person;
-            activeDetectedScore = data.score;
-            nameEl.innerText = data.person;
-            scoreEl.innerText = `Cosine Score: ${data.score.toFixed(3)}`;
-            btnIn.disabled = false;
-            btnOut.disabled = false;
-            btnIn.innerText = `Clock In: ${data.person} (I)`;
-            btnOut.innerText = `Clock Out: ${data.person} (O)`;
-          } else {
-            activeDetectedPerson = null;
-            nameEl.innerText = data.person || 'Waiting for face...';
-            scoreEl.innerText = data.score ? `Cosine Score: ${data.score.toFixed(3)}` : 'Score: -';
-            btnIn.disabled = true;
-            btnOut.disabled = true;
-            btnIn.innerText = 'Clock In (I)';
-            btnOut.innerText = 'Clock Out (O)';
-          }
-        }
-      } catch (e) {}
-    }
-
-    async function webClock(eventType) {
-      if (!activeDetectedPerson) return;
-      const res = await fetch('/api/clock', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ person_name: activeDetectedPerson, event_type: eventType, similarity: activeDetectedScore })
-      });
-      const data = await res.json();
-      const banner = document.getElementById('kioskAlert');
-      banner.style.display = 'block';
-      if (res.ok && data.success) {
-        banner.className = 'alert-banner alert-success';
-        banner.innerText = `✓ Recorded ${eventType} for ${activeDetectedPerson}`;
-        fetchSummary();
-      } else {
-        banner.className = 'alert-banner alert-warning';
-        banner.innerText = `! ${data.error || 'Failed to record'}`;
-      }
-      setTimeout(() => { banner.style.display = 'none'; }, 4000);
     }
 
     function openManualModal() {
@@ -1001,7 +1231,7 @@ HTML_TEMPLATE = """<!doctype html>
     }
 
     async function optimizeGallery() {
-      if (!confirm('Optimize Gallery: This will prune noisy outlier embeddings with low centroid similarity (< 0.45).\\nAn automatic pre-prune backup of gallery.json will be saved.\\n\\nDo you want to proceed?')) {
+      if (!confirm('Optimize Gallery: This will prune noisy outlier embeddings with low centroid similarity (< 0.45).\nAn automatic pre-prune backup of gallery.json will be saved.\n\nDo you want to proceed?')) {
         return;
       }
       try {
@@ -1035,7 +1265,7 @@ HTML_TEMPLATE = """<!doctype html>
       }
 
       const desc = olderThan ? `older than ${olderThan}` : `with status '${statusOnly}'`;
-      if (!confirm(`CAUTION: You are about to permanently purge attendance records ${desc}.\\nAn automatic backup snapshot will be created first.\\n\\nDo you want to proceed?`)) {
+      if (!confirm(`CAUTION: You are about to permanently purge attendance records ${desc}.\nAn automatic backup snapshot will be created first.\n\nDo you want to proceed?`)) {
         return;
       }
 
@@ -1052,7 +1282,7 @@ HTML_TEMPLATE = """<!doctype html>
         });
         const data = await res.json();
         if (res.ok && data.success) {
-          alert(`Purge Completed: ${data.purged_count} records purged.\\nAuto-Backup Snapshot: ${data.backup_path}`);
+          alert(`Purge Completed: ${data.purged_count} records purged.\nAuto-Backup Snapshot: ${data.backup_path}`);
           fetchSummary();
           fetchEvents();
           fetchBackups();
@@ -1107,13 +1337,13 @@ HTML_TEMPLATE = """<!doctype html>
       }
       const events = await res.json();
       if (events.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No attendance records matching filter</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No attendance records found</td></tr>';
         return;
       }
       tbody.innerHTML = events.map(evt => {
         const dateFmt = evt.event_time.replace('T', ' ').slice(0, 19);
         const typeBadge = evt.event_type === 'CHECK_IN' ? 'badge-in' : 'badge-out';
-        const statusBadge = evt.status === 'VOID' ? 'badge-void' : (evt.status === 'CORRECTED' ? 'badge-corrected' : '');
+        const statusBadge = `badge-${evt.status.toLowerCase()}`;
         const encoded = encodeURIComponent(JSON.stringify(evt));
         return `<tr>
           <td><strong>${dateFmt}</strong></td>
@@ -1284,13 +1514,6 @@ HTML_TEMPLATE = """<!doctype html>
       return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // Keyboard shortcuts for quick clocking
-    window.addEventListener('keydown', (e) => {
-      if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-      if (e.key === 'i' || e.key === 'I') webClock('CHECK_IN');
-      if (e.key === 'o' || e.key === 'O') webClock('CHECK_OUT');
-    });
-
     window.addEventListener('DOMContentLoaded', () => {
       const today = new Date().toISOString().slice(0, 10);
       document.getElementById('filterDate').value = today;
@@ -1321,14 +1544,49 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = urllib.parse.parse_qs(parsed.query)
 
-        if path in ("/", "/index.html"):
-            payload = HTML_TEMPLATE.encode("utf-8")
+        # 1. User Kiosk View
+        if path in ("/", "/index.html", "/kiosk", "/user"):
+            payload = USER_PAGE_HTML.encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
             return
+
+        # 2. Admin Management View
+        if path in ("/admin", "/admin.html"):
+            payload = ADMIN_PAGE_HTML.encode("utf-8")
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
+
+        if path == "/favicon.svg":
+            svg_file = ROOT / "static" / "favicon.svg"
+            if svg_file.exists():
+                payload = svg_file.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/svg+xml")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+
+        if path == "/favicon.ico":
+            ico_file = ROOT / "static" / "favicon.ico"
+            if ico_file.exists():
+                payload = ico_file.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/x-icon")
+                self.send_header("Cache-Control", "public, max-age=86400")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+                return
 
         if path == "/api/summary":
             date_val = params.get("date", [None])[0] or None
@@ -1338,40 +1596,36 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
 
         if path == "/api/reconciliation":
             date_val = params.get("date", [None])[0] or None
-            reconciliation = get_daily_reconciliation(date_val)
-            self.send_json(reconciliation)
+            reconcile = get_daily_reconciliation(date_val)
+            self.send_json(reconcile)
             return
 
         if path == "/api/gallery":
-            gallery_data = read_enrolled_gallery()
-            self.send_json(gallery_data)
+            gallery = read_enrolled_gallery()
+            self.send_json(gallery)
             return
 
         if path == "/api/active_face":
-            # Return currently detected face in live stream
+            # Return current face detected in live stream (within last 1.5 seconds)
             now = time.monotonic()
-            if now - _CURRENT_DETECTED["timestamp"] < 1.5:
-                self.send_json(_CURRENT_DETECTED)
+            if now - _CURRENT_DETECTED["timestamp"] < 1.5 and _CURRENT_DETECTED["person"]:
+                self.send_json({"person": _CURRENT_DETECTED["person"], "score": _CURRENT_DETECTED["score"]})
             else:
-                self.send_json({"person": None, "score": 0.0, "timestamp": now})
+                self.send_json({"person": None, "score": 0.0})
             return
 
         if path == "/api/diagnostics":
-            import sqlite3
-            db_ok = True
-            db_integrity = "ok"
+            db_integrity = "unknown"
             events_count = 0
             audit_count = 0
+            db_ok = True
             try:
                 conn = sqlite3.connect(str(DEFAULT_DB_PATH))
-                c = conn.cursor()
-                c.execute("PRAGMA integrity_check;")
-                res = c.fetchone()
-                db_integrity = res[0] if res else "unknown"
-                c.execute("SELECT COUNT(*) FROM attendance_events;")
-                events_count = c.fetchone()[0]
-                c.execute("SELECT COUNT(*) FROM audit_log;")
-                audit_count = c.fetchone()[0]
+                cursor = conn.cursor()
+                res = cursor.execute("PRAGMA integrity_check;").fetchone()
+                db_integrity = res[0] if res else "failed"
+                events_count = cursor.execute("SELECT COUNT(*) FROM attendance_events;").fetchone()[0]
+                audit_count = cursor.execute("SELECT COUNT(*) FROM audit_log;").fetchone()[0]
                 conn.close()
             except Exception:
                 db_ok = False
@@ -1461,12 +1715,13 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
             person_val = params.get("person", [None])[0] or None
             type_val = params.get("type", [None])[0] or None
             status_val = params.get("status", [None])[0] or None
+            limit_val = int(params.get("limit", [200])[0])
             events = get_events(
                 date_str=date_val,
                 person_name=person_val,
                 event_type=type_val,
                 status=status_val,
-                limit=200
+                limit=limit_val
             )
             self.send_json(events)
             return
@@ -1483,6 +1738,11 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
             self.send_json(backups)
             return
 
+        if path == "/api/maintenance":
+            logs = get_maintenance_log()
+            self.send_json(logs)
+            return
+
         if path == "/export/csv":
             date_val = params.get("date", [None])[0] or None
             person_val = params.get("person", [None])[0] or None
@@ -1495,35 +1755,6 @@ class AttendanceHTTPHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
-            return
-
-        if path == "/favicon.svg":
-            svg_file = ROOT / "static" / "favicon.svg"
-            if svg_file.exists():
-                payload = svg_file.read_bytes()
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "image/svg+xml")
-                self.send_header("Cache-Control", "public, max-age=86400")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-                return
-
-        if path == "/favicon.ico":
-            ico_file = ROOT / "static" / "favicon.ico"
-            if ico_file.exists():
-                payload = ico_file.read_bytes()
-                self.send_response(HTTPStatus.OK)
-                self.send_header("Content-Type", "image/x-icon")
-                self.send_header("Cache-Control", "public, max-age=86400")
-                self.send_header("Content-Length", str(len(payload)))
-                self.end_headers()
-                self.wfile.write(payload)
-                return
-
-        if path == "/api/maintenance":
-            logs = get_maintenance_log()
-            self.send_json(logs)
             return
 
         self.send_error(HTTPStatus.NOT_FOUND, "Not Found")
@@ -1687,7 +1918,9 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
     init_db()
     server_address = (host, port)
     httpd = HTTPServer(server_address, AttendanceHTTPHandler)
-    print(f"Face Attendance System Web Portal listening at http://{host}:{port}")
+    print(f"Face Attendance System listening:")
+    print(f"  - User Kiosk View: http://{host}:{port}/")
+    print(f"  - Admin Portal   : http://{host}:{port}/admin")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -1697,7 +1930,7 @@ def run_server(host: str = "127.0.0.1", port: int = 8080) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Attendance Web Admin & Kiosk Portal")
+    parser = argparse.ArgumentParser(description="Attendance Web Portal (User Kiosk & Admin)")
     parser.add_argument("--host", default="127.0.0.1", help="Host address (default: 127.0.0.1)")
     parser.add_argument("--port", type=int, default=8080, help="Port (default: 8080)")
     args = parser.parse_args()

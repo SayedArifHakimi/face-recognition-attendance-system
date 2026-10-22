@@ -51,11 +51,27 @@ class TestAdminWeb(unittest.TestCase):
         cls.patcher_gal.stop()
         cls.temp_dir.cleanup()
 
-    def test_get_index(self):
-        req = urllib.request.urlopen(f"{self.base_url}/")
+    def test_get_user_kiosk_page(self):
+        for route in ["/", "/kiosk", "/user"]:
+            req = urllib.request.urlopen(f"{self.base_url}{route}")
+            self.assertEqual(req.status, 200)
+            content = req.read().decode("utf-8")
+            self.assertIn("Face Attendance Kiosk", content)
+            self.assertIn("Start Camera Stream", content)
+            self.assertIn("Admin Portal", content)
+            # Verify admin actions are NOT exposed on user kiosk
+            self.assertNotIn("Purge Retention", content)
+            self.assertNotIn("Database Restore", content)
+
+    def test_get_admin_portal_page(self):
+        req = urllib.request.urlopen(f"{self.base_url}/admin")
         self.assertEqual(req.status, 200)
         content = req.read().decode("utf-8")
-        self.assertIn("Face Attendance", content)
+        self.assertIn("Attendance Admin Portal", content)
+        self.assertIn("Daily Reconciliation", content)
+        self.assertIn("Enrolled Persons in Gallery", content)
+        self.assertIn("Data Retention Policy &amp; Event Purge", content)
+        self.assertIn("Kiosk View", content)
 
     def test_get_events_and_summary(self):
         req = urllib.request.urlopen(f"{self.base_url}/api/events")

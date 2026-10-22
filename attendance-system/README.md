@@ -18,11 +18,12 @@ Ensure commands are executed in PowerShell from this folder (`attendance-system`
 # 3. Start the interactive Kiosk & Face ID monitor
 .\.venv\Scripts\python.exe face_id.py
 
-# 4. Start the Admin & Audit Web Portal (in a separate terminal)
+# 4. Start the Web Server (serves both User Kiosk and Admin Portal)
 .\.venv\Scripts\python.exe admin_web.py --port 8080
 ```
 
-Open the web portal at **http://127.0.0.1:8080**.
+- **User / Kiosk Interface**: **http://127.0.0.1:8080/** (also `/kiosk`, `/user`)
+- **Admin Management Portal**: **http://127.0.0.1:8080/admin**
 
 ---
 
@@ -45,18 +46,21 @@ Open the web portal at **http://127.0.0.1:8080**.
 
 ---
 
-## 3. Admin & Audit Web Portal (`admin_web.py`)
+## 3. Web Architecture: User Kiosk & Admin Portal (`admin_web.py`)
 
-A zero-dependency Python HTTP portal accessible via any local browser:
-- **Dashboard**: Live tally of total clock actions, unique individuals present, and check-in / check-out counts.
-- **Filterable Logs**: Query attendance records by date (`YYYY-MM-DD`), person name, event type (`CHECK_IN`, `CHECK_OUT`), and status (`RECORDED`, `CORRECTED`, `VOID`).
-- **Daily Reconciliation**: Table comparing first check-in and last check-out times per employee, automatically flagging missing check-outs (`MISSING_CHECK_OUT`).
-- **Audited Corrections & Voiding**: Modify or void erroneous entries. Every change strictly requires an admin name and reason, which is permanently logged to `audit_log`.
-- **Manual Fallback**: Record manual attendance events for employees who missed badge scanning or during camera maintenance.
-- **RFC 4180 CSV Export**: One-click download of attendance logs for payroll or offline analysis.
-- **Backups & Data Retention**: Dedicated UI tab to create live transactionally consistent database backups into `data/backups/`, restore from point-in-time snapshots, and safely purge obsolete records with automated pre-purge backups.
-- **Enrolled Identity Management**: Remove enrolled persons directly from the web portal with automated pre-deletion backups (`data/gallery_backups/`), and optimize reference embeddings with centroid outlier pruning.
-- **Biometric Favicon**: Native SVG and standard 32x32 ICO icons served at `/favicon.svg` and `/favicon.ico` for clean browser bookmarking.
+A zero-dependency Python HTTP server strictly separating self-service employee attendance and administrative controls:
+
+### A. User / Kiosk Web Interface (`/`, `/kiosk`, `/user`)
+- **Self-Service Attendance**: Live camera stream with visual bounding boxes, real-time facial recognition status, and single-click **Clock In** (`I`) / **Clock Out** (`O`) controls.
+- **Privacy & Simplicity**: Read-only display of today's verified check-in/out events. Zero administrative controls, database purge tools, or sensitive audit logs are exposed on the user page.
+
+### B. Admin Management Portal (`/admin`)
+- **Metrics & Reconciliation**: Live tally of attendance actions, daily check-in vs check-out reconciliations, and automatic flagging of missing check-outs.
+- **Filterable Logs & Audit Trail**: Query attendance records by date, employee name, event type, and status (`RECORDED`, `CORRECTED`, `VOID`). Every correction requires an admin name and audited reason.
+- **Manual Fallback & CSV Export**: Record manual entries when badge/camera scans are unavailable, and download RFC 4180 CSV logs with a single click.
+- **Enrolled Identity Management**: View enrolled persons, prune centroid outlier embeddings, or delete enrolled identities with automatic pre-deletion backups (`data/gallery_backups/`).
+- **Data Retention & Snapshots**: Automated pre-action database backups, point-in-time snapshot restores, and retention-based event purging.
+- **Biometric Favicon**: Native SVG and standard 32×32 ICO icons served at `/favicon.svg` and `/favicon.ico` for clean browser bookmarking.
 
 ---
 
